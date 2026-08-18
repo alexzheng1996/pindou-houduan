@@ -1,0 +1,2 @@
+# Payload generates SQL template literals with intentional leading whitespace.
+src/migrations/* -whitespace

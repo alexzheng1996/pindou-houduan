@@ -1,0 +1,25 @@
+name: pixomosaic-backend
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: pixomosaic-backend-postgres
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:55440:5432'
+    environment:
+      POSTGRES_DB: pixomosaic_backend_local
+      POSTGRES_USER: pixomosaic_local
+      # M0 only: localhost-only database with no real user data.
+      # Team-test and production use separate secret-managed credentials.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U pixomosaic_local -d pixomosaic_backend_local']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - pixomosaic_backend_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  pixomosaic_backend_postgres_data:
