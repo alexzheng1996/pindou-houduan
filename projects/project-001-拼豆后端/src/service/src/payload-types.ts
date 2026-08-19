@@ -121,6 +121,12 @@ export interface UserAuthOperations {
  */
 export interface User {
   id: number;
+  role: 'user' | 'staff' | 'admin';
+  accountStatus: 'pending_verification' | 'active' | 'suspended';
+  authProvider: 'local' | 'google';
+  googleSubject?: string | null;
+  termsVersion?: string | null;
+  termsAcceptedAt?: string | null;
   updatedAt: string;
   createdAt: string;
   email: string;
@@ -128,6 +134,8 @@ export interface User {
   resetPasswordExpiration?: string | null;
   salt?: string | null;
   hash?: string | null;
+  _verified?: boolean | null;
+  _verificationToken?: string | null;
   loginAttempts?: number | null;
   lockUntil?: string | null;
   sessions?:
@@ -214,6 +222,12 @@ export interface PayloadMigration {
  * via the `definition` "users_select".
  */
 export interface UsersSelect<T extends boolean = true> {
+  role?: T;
+  accountStatus?: T;
+  authProvider?: T;
+  googleSubject?: T;
+  termsVersion?: T;
+  termsAcceptedAt?: T;
   updatedAt?: T;
   createdAt?: T;
   email?: T;
@@ -221,6 +235,8 @@ export interface UsersSelect<T extends boolean = true> {
   resetPasswordExpiration?: T;
   salt?: T;
   hash?: T;
+  _verified?: T;
+  _verificationToken?: T;
   loginAttempts?: T;
   lockUntil?: T;
   sessions?:

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url'
 import sharp from 'sharp'
 
 import { Users } from './collections/Users'
+import { runtimeConfig } from './config/runtime'
 import { migrations } from './migrations'
 
 const filename = fileURLToPath(import.meta.url)
@@ -21,6 +22,8 @@ export default buildConfig({
   // M0 intentionally has no upload collection: user files remain out of the
   // application disk until the M1 private S3/R2 storage boundary is verified.
   collections: [Users],
+  cors: runtimeConfig.allowedOrigins,
+  csrf: runtimeConfig.csrfOrigins,
   editor: lexicalEditor(),
   graphQL: {
     // M0 has no public GraphQL contract. Keep its attack surface closed until a
