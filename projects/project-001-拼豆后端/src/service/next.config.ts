@@ -7,6 +7,8 @@ const __filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(__filename)
 
 const nextConfig: NextConfig = {
+  // 仅供本机并行联调使用；未设置时保持默认 .next，不改变常规开发或部署目录。
+  distDir: process.env.PIXOMOSAIC_NEXT_DIST_DIR?.trim() || undefined,
   // Payload otherwise adds its own framework-identifying response header.
   poweredByHeader: false,
   output: 'standalone',

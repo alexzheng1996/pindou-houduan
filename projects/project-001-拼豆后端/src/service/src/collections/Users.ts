@@ -1,11 +1,31 @@
-import type { CollectionConfig } from 'payload'
+import type { CollectionConfig, PayloadRequest } from 'payload'
+import { BETTER_AUTH_CONTEXT_KEY } from 'payload-auth/better-auth/adapter'
 
 export const userRoles = ['user', 'staff', 'admin'] as const
 export const accountStatuses = ['pending_verification', 'active', 'suspended'] as const
-export const authProviders = ['local', 'google'] as const
 
-const isAdmin = ({ req }: { req: { user?: { role?: string } | null } }) =>
-  req.user?.role === 'admin'
+type UserRole = (typeof userRoles)[number]
+
+type BetterAuthRequest = PayloadRequest & {
+  context?: Record<string, unknown>
+  user?: { role?: UserRole | UserRole[] | string | null } | null
+}
+
+const hasRole = (user: BetterAuthRequest['user'], role: UserRole): boolean => {
+  if (Array.isArray(user?.role)) {
+    return user.role.includes(role)
+  }
+
+  return typeof user?.role === 'string' && user.role === role
+}
+
+const isAdmin = ({ req }: { req: BetterAuthRequest }) => hasRole(req.user, 'admin')
+
+const isBetterAuthInternalRequest = (req: BetterAuthRequest): boolean =>
+  Boolean(req.context?.[BETTER_AUTH_CONTEXT_KEY])
+
+export const allowBetterAuthOrAdmin = ({ req }: { req: BetterAuthRequest }) =>
+  isBetterAuthInternalRequest(req) || isAdmin({ req })
 
 export const Users: CollectionConfig = {
   slug: 'users',
@@ -14,65 +34,16 @@ export const Users: CollectionConfig = {
   },
   access: {
     // The raw Payload Users REST surface is an internal management surface.
+    // Better Auth's Payload adapter carries its own trusted context marker;
     // PixoMosaic users will use the versioned /api/v1 contract instead.
     admin: isAdmin,
-    create: () => false,
-    read: isAdmin,
-    update: isAdmin,
+    create: allowBetterAuthOrAdmin,
+    read: allowBetterAuthOrAdmin,
+    update: allowBetterAuthOrAdmin,
     delete: isAdmin,
     unlock: isAdmin,
   },
-  auth: {
-    cookies: {
-      domain: process.env.COOKIE_DOMAIN || undefined,
-      sameSite: 'Lax',
-      secure:
-        process.env.COOKIE_SECURE === 'true' ||
-        process.env.APP_ENV === 'team-test' ||
-        process.env.NODE_ENV === 'production',
-    },
-    lockTime: 15 * 60 * 1000,
-    maxLoginAttempts: 5,
-    tokenExpiration: 2 * 60 * 60,
-    verify: true,
-  },
-  fields: [
-    {
-      name: 'role',
-      type: 'select',
-      defaultValue: 'user',
-      options: userRoles.map((value) => ({ label: value, value })),
-      required: true,
-    },
-    {
-      name: 'accountStatus',
-      type: 'select',
-      defaultValue: 'pending_verification',
-      options: accountStatuses.map((value) => ({ label: value, value })),
-      required: true,
-    },
-    {
-      name: 'authProvider',
-      type: 'select',
-      defaultValue: 'local',
-      options: authProviders.map((value) => ({ label: value, value })),
-      required: true,
-    },
-    {
-      name: 'googleSubject',
-      type: 'text',
-      unique: true,
-      hidden: true,
-    },
-    {
-      name: 'termsVersion',
-      type: 'text',
-      hidden: true,
-    },
-    {
-      name: 'termsAcceptedAt',
-      type: 'date',
-      hidden: true,
-    },
-  ],
+  // Fields are declared in betterAuthOptions.user.additionalFields, so the
+  // plugin, runtime schema and database migration share one user definition.
+  fields: [],
 }

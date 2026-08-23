@@ -1,6 +1,6 @@
 # PixoMosaic 后端服务（M0 + M1 本地基础）
 
-> 状态：M0 技术基础已完成，M1 本地账号模型基础已开始。本服务尚未实现完整用户注册、云端作品、上传、邮件或 OAuth，也不能作为团队/生产环境部署。
+> 状态：M0 技术基础与 M1 本地账号、私密 `pattern` / `board` 作品、受控文件、删除回收、审计反滥用和 Google 本机 OIDC Mock 均已完成。本服务尚未实现真实邮件、真实 Google OAuth、真实前端联调或团队/生产环境部署。
 
 ## 作用与边界
 
@@ -9,8 +9,8 @@
 - 本地数据库容器仅绑定 `127.0.0.1:55440`，不得写入真实用户、订单、地址或文件。
 - M0 已关闭 GraphQL；Payload 默认 REST/Admin 面不是 PixoMosaic 前端的业务契约。M1 只会实现文档定义的 `/api/v1`。
 - M1 本地基础已固定 `user/staff/admin` 角色、账号状态、认证来源、条款字段、邮箱验证、登录失败锁定和 Cookie/CORS/CSRF 环境边界；数据库变更通过 `20260818_232836_m1_user_account_fields` 显式迁移。
-- Google 登录只完成成熟方案评估，候选为 `payload-auth + better-auth`；安装前必须通过本地迁移、邮箱流程、Google mock、账号绑定和权限 PoC。
-- 本服务未满足团队环境权限要求。M1 必须补齐 User/Staff/Admin 权限和“用户 A 不能访问用户 B 资源”的自动化测试后才能部署 team-test。
+- Google 登录复用 `payload-auth + better-auth` 的 `generic-oauth` 能力。本机 Mock 已覆盖协议校验与显式绑定；默认 `GOOGLE_OAUTH_MODE=disabled`，真实 Google OAuth client、回调 URI 与密钥仍未配置。具体边界见 `../../docs/specs/02c-M1-Google本地OIDC-Mock-spec.md`。
+- 本服务尚未满足 team-test 的真实邮件、真实前端联调、反向代理/IP 边界与部署演练要求；已完成的 A/B 私有资源隔离和 M1 本地权限自动化测试不能替代该门禁。
 
 完整架构、接口和阶段门禁位于项目上层 `README.md`、`docs/specs/` 与 `docs/接口/`。
 
@@ -64,6 +64,11 @@ fnm exec --using ../../.node-version pnpm migrate:status
 
 ## M1 本地与部署前门禁
 
-M1 当前先在本机完成注册、作品、上传模拟、邮件模拟、Google 本地 PoC、权限和反滥用验证，不创建云资源或 DNS。仅当本地最小功能、迁移、自动化测试和 Docker 部署检查全部通过后，才向业务方说明当日费用、免费额度、预算上限与停止/删除方案，并请求创建 team-test 的授权。
+- 本机受控文件 API 已提供 `upload-intent → PUT → confirm → 私有 GET`：只接受 PNG/JPEG/WebP，单文件 15 MiB、每作品 10 张/100 MiB、每用户 2 GiB；字节特征、图片解码、SHA-256、归属和状态均由服务端再校验。响应不含存储键、磁盘路径或公开 URL。
+- 本机对象目录是 Git/Docker 忽略的 `data/local-object-store/`，只用于自动化验证；其底层适配器将由 R2/S3 私有桶替换，不能直接带入部署。
+- Google Mock 仅由 `pnpm test` 的 Vitest 测试进程在 `127.0.0.1:55441` 临时启动。正常 `dev` / `start` 不会启动它，也不应把 `GOOGLE_OAUTH_MODE=mock` 带入任何部署环境。
+- 邮件投递统一经过本项目的认证邮件层：local 只写进测试 outbox；仅获批的 team-test 才能设 `MAIL_TRANSPORT=resend` 并使用官方 `@payloadcms/email-resend`。真实凭据只保存于部署平台密钥配置，细则见 `../../docs/specs/02d-M1-真实邮件适配器准备-spec.md`。
+
+M1 已完成注册、作品、上传模拟、邮件模拟、Google 本机 OIDC Mock、权限和反滥用的本地验证，不创建云资源或 DNS。下一步先准备真实邮件适配器的可替换接口，再进行只读契约核对和前端联调；仅当全部本地功能、迁移、自动化测试和 Docker 部署检查通过后，才向业务方说明当日费用、免费额度、预算上限与停止/删除方案，并请求创建 team-test 的授权。
 
 主域名已确认是 `pixomosaic.com`。Railway 实际分配域名后，由业务方自行添加 `api-test.pixomosaic.com` CNAME；当前不需要 Cloudflare 密码或 API Token。完整门禁见 `../../docs/实施准备/M1-team-test-部署前检查与费用Go.md`。

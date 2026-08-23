@@ -68,14 +68,37 @@ export interface Config {
   blocks: {};
   collections: {
     users: User;
+    sessions: Session;
+    accounts: Account;
+    verifications: Verification;
+    rateLimit: RateLimit;
+    'admin-invitations': AdminInvitation;
+    works: Work;
+    'work-documents': WorkDocument;
+    'work-assets': WorkAsset;
+    'api-idempotency-records': ApiIdempotencyRecord;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
     'payload-migrations': PayloadMigration;
   };
-  collectionsJoins: {};
+  collectionsJoins: {
+    users: {
+      account: 'accounts';
+      session: 'sessions';
+    };
+  };
   collectionsSelect: {
     users: UsersSelect<false> | UsersSelect<true>;
+    sessions: SessionsSelect<false> | SessionsSelect<true>;
+    accounts: AccountsSelect<false> | AccountsSelect<true>;
+    verifications: VerificationsSelect<false> | VerificationsSelect<true>;
+    rateLimit: RateLimitSelect<false> | RateLimitSelect<true>;
+    'admin-invitations': AdminInvitationsSelect<false> | AdminInvitationsSelect<true>;
+    works: WorksSelect<false> | WorksSelect<true>;
+    'work-documents': WorkDocumentsSelect<false> | WorkDocumentsSelect<true>;
+    'work-assets': WorkAssetsSelect<false> | WorkAssetsSelect<true>;
+    'api-idempotency-records': ApiIdempotencyRecordsSelect<false> | ApiIdempotencyRecordsSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -121,32 +144,280 @@ export interface UserAuthOperations {
  */
 export interface User {
   id: number;
-  role: 'user' | 'staff' | 'admin';
+  /**
+   * Users chosen display name
+   */
+  name: string;
+  /**
+   * The email of the user
+   */
+  email: string;
+  /**
+   * Whether the email of the user has been verified
+   */
+  emailVerified: boolean;
+  /**
+   * The image of the user
+   */
+  image?: string | null;
+  createdAt: string;
+  updatedAt: string;
   accountStatus: 'pending_verification' | 'active' | 'suspended';
-  authProvider: 'local' | 'google';
-  googleSubject?: string | null;
   termsVersion?: string | null;
   termsAcceptedAt?: string | null;
+  loginFailureCount?: number | null;
+  loginLockedUntil?: string | null;
+  /**
+   * The role/ roles of the user
+   */
+  role?: ('admin' | 'user' | 'staff')[] | null;
+  account?: {
+    docs?: (number | Account)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
+  session?: {
+    docs?: (number | Session)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
+  collection: 'users';
+}
+/**
+ * Accounts are used to store user accounts for authentication providers
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "accounts".
+ */
+export interface Account {
+  id: number;
+  issuer: string;
+  /**
+   * The id of the account as provided by the SSO or equal to userId for credential accounts
+   */
+  accountId: string;
+  /**
+   * The id of the provider as provided by the SSO
+   */
+  providerId: string;
+  /**
+   * The user that the account belongs to
+   */
+  user: number | User;
+  /**
+   * The access token of the account. Returned by the provider
+   */
+  accessToken?: string | null;
+  /**
+   * The refresh token of the account. Returned by the provider
+   */
+  refreshToken?: string | null;
+  /**
+   * The id token for the account. Returned by the provider
+   */
+  idToken?: string | null;
+  /**
+   * The date and time when the access token will expire
+   */
+  accessTokenExpiresAt?: string | null;
+  /**
+   * The date and time when the refresh token will expire
+   */
+  refreshTokenExpiresAt?: string | null;
+  /**
+   * The scope of the account. Returned by the provider
+   */
+  scope?: string | null;
+  /**
+   * The hashed password of the account. Mainly used for email and password authentication
+   */
+  password?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+/**
+ * Sessions are active sessions for users. They are used to authenticate users with a session token
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "sessions".
+ */
+export interface Session {
+  id: number;
+  /**
+   * The date and time when the session will expire
+   */
+  expiresAt: string;
+  /**
+   * The unique session token
+   */
+  token: string;
+  createdAt: string;
+  updatedAt: string;
+  /**
+   * The IP address of the device
+   */
+  ipAddress?: string | null;
+  /**
+   * The user agent information of the device
+   */
+  userAgent?: string | null;
+  /**
+   * The user that the session belongs to
+   */
+  user: number | User;
+}
+/**
+ * Verifications are used to verify authentication requests
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "verifications".
+ */
+export interface Verification {
+  id: number;
+  /**
+   * The identifier of the verification request
+   */
+  identifier: string;
+  /**
+   * The value to be verified
+   */
+  value: string;
+  /**
+   * The date and time when the verification request will expire
+   */
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+/**
+ * Rate limits for users
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rateLimit".
+ */
+export interface RateLimit {
+  id: number;
+  /**
+   * The key for the rate limit.
+   */
+  key: string;
+  count: number;
+  lastRequest: number;
   updatedAt: string;
   createdAt: string;
-  email: string;
-  resetPasswordToken?: string | null;
-  resetPasswordExpiration?: string | null;
-  salt?: string | null;
-  hash?: string | null;
-  _verified?: boolean | null;
-  _verificationToken?: string | null;
-  loginAttempts?: number | null;
-  lockUntil?: string | null;
-  sessions?:
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "admin-invitations".
+ */
+export interface AdminInvitation {
+  id: number;
+  role: 'admin' | 'user' | 'staff';
+  token: string;
+  /**
+   * The invitation is invalid after this time.
+   */
+  expiresAt: string;
+  url?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "works".
+ */
+export interface Work {
+  id: number;
+  publicId: string;
+  owner: number | User;
+  kind: 'pattern' | 'board';
+  title: string;
+  state: 'draft' | 'active' | 'pending_deletion' | 'deleted';
+  visibility: 'private';
+  documentRevision: number;
+  documentSha256: string;
+  currentDocument?: (number | null) | WorkDocument;
+  recoverableUntil?: string | null;
+  deletedAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "work-documents".
+ */
+export interface WorkDocument {
+  id: number;
+  owner: number | User;
+  work: number | Work;
+  revision: number;
+  schemaVersion: number;
+  kind: 'pattern' | 'board';
+  document:
     | {
-        id: string;
-        createdAt?: string | null;
-        expiresAt: string;
-      }[]
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
     | null;
-  password?: string | null;
-  collection: 'users';
+  contentSha256: string;
+  documentByteSize: number;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "work-assets".
+ */
+export interface WorkAsset {
+  id: number;
+  publicId: string;
+  owner: number | User;
+  work: number | Work;
+  role: 'original' | 'display' | 'thumbnail' | 'document' | 'export';
+  status: 'upload_pending' | 'uploaded' | 'ready' | 'validation_failed' | 'orphaned' | 'pending_purge' | 'deleted';
+  visibility: 'private';
+  mimeType: string;
+  detectedMimeType?: string | null;
+  sizeBytes: number;
+  sha256: string;
+  storageKey: string;
+  storageETag?: string | null;
+  uploadExpiresAt?: string | null;
+  confirmedAt?: string | null;
+  orphanedAt?: string | null;
+  purgeAfter?: string | null;
+  sourceDocumentRevision?: number | null;
+  sourceDocumentSha256?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "api-idempotency-records".
+ */
+export interface ApiIdempotencyRecord {
+  id: number;
+  actor: number | User;
+  route: string;
+  keySha256: string;
+  requestSha256: string;
+  state: 'in_progress' | 'completed';
+  responseStatus?: number | null;
+  responseBody?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  expiresAt: string;
+  updatedAt: string;
+  createdAt: string;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -171,10 +442,47 @@ export interface PayloadKv {
  */
 export interface PayloadLockedDocument {
   id: number;
-  document?: {
-    relationTo: 'users';
-    value: number | User;
-  } | null;
+  document?:
+    | ({
+        relationTo: 'users';
+        value: number | User;
+      } | null)
+    | ({
+        relationTo: 'sessions';
+        value: number | Session;
+      } | null)
+    | ({
+        relationTo: 'accounts';
+        value: number | Account;
+      } | null)
+    | ({
+        relationTo: 'verifications';
+        value: number | Verification;
+      } | null)
+    | ({
+        relationTo: 'rateLimit';
+        value: number | RateLimit;
+      } | null)
+    | ({
+        relationTo: 'admin-invitations';
+        value: number | AdminInvitation;
+      } | null)
+    | ({
+        relationTo: 'works';
+        value: number | Work;
+      } | null)
+    | ({
+        relationTo: 'work-documents';
+        value: number | WorkDocument;
+      } | null)
+    | ({
+        relationTo: 'work-assets';
+        value: number | WorkAsset;
+      } | null)
+    | ({
+        relationTo: 'api-idempotency-records';
+        value: number | ApiIdempotencyRecord;
+      } | null);
   globalSlug?: string | null;
   user: {
     relationTo: 'users';
@@ -222,30 +530,163 @@ export interface PayloadMigration {
  * via the `definition` "users_select".
  */
 export interface UsersSelect<T extends boolean = true> {
-  role?: T;
+  name?: T;
+  email?: T;
+  emailVerified?: T;
+  image?: T;
+  createdAt?: T;
+  updatedAt?: T;
   accountStatus?: T;
-  authProvider?: T;
-  googleSubject?: T;
   termsVersion?: T;
   termsAcceptedAt?: T;
+  loginFailureCount?: T;
+  loginLockedUntil?: T;
+  role?: T;
+  account?: T;
+  session?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "sessions_select".
+ */
+export interface SessionsSelect<T extends boolean = true> {
+  expiresAt?: T;
+  token?: T;
+  createdAt?: T;
+  updatedAt?: T;
+  ipAddress?: T;
+  userAgent?: T;
+  user?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "accounts_select".
+ */
+export interface AccountsSelect<T extends boolean = true> {
+  issuer?: T;
+  accountId?: T;
+  providerId?: T;
+  user?: T;
+  accessToken?: T;
+  refreshToken?: T;
+  idToken?: T;
+  accessTokenExpiresAt?: T;
+  refreshTokenExpiresAt?: T;
+  scope?: T;
+  password?: T;
+  createdAt?: T;
+  updatedAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "verifications_select".
+ */
+export interface VerificationsSelect<T extends boolean = true> {
+  identifier?: T;
+  value?: T;
+  expiresAt?: T;
+  createdAt?: T;
+  updatedAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rateLimit_select".
+ */
+export interface RateLimitSelect<T extends boolean = true> {
+  key?: T;
+  count?: T;
+  lastRequest?: T;
   updatedAt?: T;
   createdAt?: T;
-  email?: T;
-  resetPasswordToken?: T;
-  resetPasswordExpiration?: T;
-  salt?: T;
-  hash?: T;
-  _verified?: T;
-  _verificationToken?: T;
-  loginAttempts?: T;
-  lockUntil?: T;
-  sessions?:
-    | T
-    | {
-        id?: T;
-        createdAt?: T;
-        expiresAt?: T;
-      };
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "admin-invitations_select".
+ */
+export interface AdminInvitationsSelect<T extends boolean = true> {
+  role?: T;
+  token?: T;
+  expiresAt?: T;
+  url?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "works_select".
+ */
+export interface WorksSelect<T extends boolean = true> {
+  publicId?: T;
+  owner?: T;
+  kind?: T;
+  title?: T;
+  state?: T;
+  visibility?: T;
+  documentRevision?: T;
+  documentSha256?: T;
+  currentDocument?: T;
+  recoverableUntil?: T;
+  deletedAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "work-documents_select".
+ */
+export interface WorkDocumentsSelect<T extends boolean = true> {
+  owner?: T;
+  work?: T;
+  revision?: T;
+  schemaVersion?: T;
+  kind?: T;
+  document?: T;
+  contentSha256?: T;
+  documentByteSize?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "work-assets_select".
+ */
+export interface WorkAssetsSelect<T extends boolean = true> {
+  publicId?: T;
+  owner?: T;
+  work?: T;
+  role?: T;
+  status?: T;
+  visibility?: T;
+  mimeType?: T;
+  detectedMimeType?: T;
+  sizeBytes?: T;
+  sha256?: T;
+  storageKey?: T;
+  storageETag?: T;
+  uploadExpiresAt?: T;
+  confirmedAt?: T;
+  orphanedAt?: T;
+  purgeAfter?: T;
+  sourceDocumentRevision?: T;
+  sourceDocumentSha256?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "api-idempotency-records_select".
+ */
+export interface ApiIdempotencyRecordsSelect<T extends boolean = true> {
+  actor?: T;
+  route?: T;
+  keySha256?: T;
+  requestSha256?: T;
+  state?: T;
+  responseStatus?: T;
+  responseBody?: T;
+  expiresAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

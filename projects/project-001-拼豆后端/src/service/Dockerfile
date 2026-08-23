@@ -26,6 +26,10 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
+# Next collects route configuration during the image build and therefore
+# evaluates Better Auth once. This non-secret marker is limited to the builder
+# stage; the runner must receive a real secret from its deployment environment.
+ENV PIXOMOSAIC_BUILD_PHASE=1
 
 RUN \
   if [ -f yarn.lock ]; then yarn run build; \
