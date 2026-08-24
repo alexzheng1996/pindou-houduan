@@ -49,8 +49,16 @@ ENV APP_ENV=deployment-app-env-required
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
+RUN corepack enable pnpm
 
 COPY --from=builder /app/public ./public
+
+# Railway Pre-deploy/Cron 使用同一最终镜像执行 pnpm migrate 与
+# pnpm cleanup:team-test；因此保留受控迁移源码和 CLI 依赖，但不复制 .env、数据库
+# 数据或本机对象目录。Web 仍由 standalone server.js 启动。
+COPY package.json pnpm-lock.yaml tsconfig.json ./
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=builder /app/src ./src
 
 # Set the correct permission for prerender cache
 RUN mkdir .next

@@ -7,6 +7,7 @@
   "scripts": {
     "build": "cross-env NODE_OPTIONS=\"--no-deprecation --max-old-space-size=8000\" next build",
     "cleanup:assets": "cross-env NODE_OPTIONS=--no-deprecation tsx src/scripts/purge-expired-assets.ts",
+    "cleanup:team-test": "cross-env NODE_OPTIONS=--no-deprecation tsx src/scripts/cleanup-team-test.ts",
     "cleanup:inventory-imports": "cross-env NODE_OPTIONS=--no-deprecation tsx src/scripts/purge-expired-inventory-import-previews.ts",
     "cleanup:security": "cross-env NODE_OPTIONS=--no-deprecation tsx src/scripts/purge-expired-security-records.ts",
     "cleanup:works": "cross-env NODE_OPTIONS=--no-deprecation tsx src/scripts/purge-expired-works.ts",
@@ -23,6 +24,7 @@
     "test:int": "cross-env NODE_OPTIONS=--no-deprecation vitest run --config ./vitest.config.mts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1117.0",
     "@payloadcms/db-postgres": "3.88.0",
     "@payloadcms/email-resend": "3.88.0",
     "@payloadcms/next": "3.88.0",

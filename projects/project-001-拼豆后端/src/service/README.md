@@ -66,10 +66,23 @@ fnm exec --using ../../.node-version pnpm migrate:status
 
 - 本机受控文件 API 已提供 `upload-intent → PUT → confirm → 私有 GET`：只接受 PNG/JPEG/WebP，单文件 15 MiB、每作品 10 张/100 MiB、每用户 2 GiB；字节特征、图片解码、SHA-256、归属和状态均由服务端再校验。响应不含存储键、磁盘路径或公开 URL。
 - 本机对象目录是 Git/Docker 忽略的 `data/local-object-store/`，只用于自动化验证；其底层适配器将由 R2/S3 私有桶替换，不能直接带入部署。
+- 对象存储通过统一私有端口选择：`APP_ENV=local` 只能使用 `OBJECT_STORAGE_MODE=local`；`APP_ENV=team-test` 必须显式使用 `OBJECT_STORAGE_MODE=r2`，并在部署平台密钥中填写 `R2_ACCOUNT_ID`、`R2_BUCKET`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_REGION=auto`。运行时返回的配置投影不包含访问密钥，缺少任一变量会在启动前失败，绝不回退到本机磁盘。
 - Google Mock 仅由 `pnpm test` 的 Vitest 测试进程在 `127.0.0.1:55441` 临时启动。正常 `dev` / `start` 不会启动它，也不应把 `GOOGLE_OAUTH_MODE=mock` 带入任何部署环境。
 - 邮件投递统一经过本项目的认证邮件层：local 只写进测试 outbox；仅获批的 team-test 才能设 `MAIL_TRANSPORT=resend` 并使用官方 `@payloadcms/email-resend`。真实凭据只保存于部署平台密钥配置，细则见 `../../docs/specs/02d-M1-真实邮件适配器准备-spec.md`。
 - 本机手动注册可通过前端“获取本机验证码”读取对应邮箱最新 OTP。该入口仅在 `APP_ENV=local`、后端监听回环地址且请求来自受信本机前端时存在；不写日志或文件，team-test 与生产一律返回不存在。
 
 M1 已完成注册、作品、上传模拟、邮件模拟、Google 本机 OIDC Mock、权限和反滥用的本地验证，不创建云资源或 DNS。下一步先准备真实邮件适配器的可替换接口，再进行只读契约核对和前端联调；仅当全部本地功能、迁移、自动化测试和 Docker 部署检查通过后，才向业务方说明当日费用、免费额度、预算上限与停止/删除方案，并请求创建 team-test 的授权。
+
+## 部署前本地验证
+
+最终 Docker runner 同时携带显式迁移和清理所需的受控源码与 CLI，可在 Railway Pre-deploy/Cron 中复用同一镜像：
+
+```bash
+fnm exec --using ../../.node-version pnpm migrate
+fnm exec --using ../../.node-version pnpm migrate:status
+fnm exec --using ../../.node-version pnpm cleanup:team-test
+```
+
+`cleanup:team-test` 按 assets → works → security → inventory-imports 顺序各执行一次；单类失败不会跳过其他类别，最终非零退出，交给下一轮任务重试。当前本机仍只允许使用 local 数据库和对象目录；未创建或连接 R2、Neon、Railway、Resend、DNS 或 OAuth 资源。
 
 主域名已确认是 `pixomosaic.com`。Railway 实际分配域名后，由业务方自行添加 `api-test.pixomosaic.com` CNAME；当前不需要 Cloudflare 密码或 API Token。完整门禁见 `../../docs/实施准备/M1-team-test-部署前检查与费用Go.md`。

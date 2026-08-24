@@ -13,7 +13,48 @@ const localFrontendOrigins = ['http://127.0.0.1:3050', 'http://127.0.0.1:3100']
 
 type GoogleOAuthMode = 'disabled' | 'google' | 'mock'
 type MailTransport = 'local-outbox' | 'resend'
-type RuntimeEnvironment = Record<string, string | undefined>
+export type RuntimeEnvironment = Record<string, string | undefined>
+const isR2BucketName = (value: string): boolean =>
+  value.length >= 3 && value.length <= 63 && /^[a-z0-9](?:[a-z0-9.-]{1,61}[a-z0-9])?$/.test(value)
+
+const getObjectStorageConfig = (environment: RuntimeEnvironment, appEnv: string) => {
+  const mode = environment.OBJECT_STORAGE_MODE?.trim() || (appEnv === 'local' ? 'local' : '')
+  if (mode !== 'local' && mode !== 'r2') {
+    throw new Error('OBJECT_STORAGE_MODE 只能是 local 或 r2。')
+  }
+  if (appEnv === 'local' && mode !== 'local') {
+    throw new Error('APP_ENV=local 只能使用 OBJECT_STORAGE_MODE=local。')
+  }
+  if (appEnv === 'team-test' && mode !== 'r2') {
+    throw new Error('APP_ENV=team-test 必须使用 OBJECT_STORAGE_MODE=r2。')
+  }
+  if (mode === 'local') return { mode: 'local' as const }
+
+  const accountId = environment.R2_ACCOUNT_ID?.trim() || ''
+  const bucket = environment.R2_BUCKET?.trim() || ''
+  const region = environment.R2_REGION?.trim() || ''
+  const accessKeyId = environment.R2_ACCESS_KEY_ID?.trim() || ''
+  const secretAccessKey = environment.R2_SECRET_ACCESS_KEY?.trim() || ''
+  if (!accountId || !/^[a-f0-9]{32}$/i.test(accountId)) {
+    throw new Error('启用 R2 前必须设置有效的 R2_ACCOUNT_ID。')
+  }
+  if (!bucket || !isR2BucketName(bucket)) {
+    throw new Error('启用 R2 前必须设置有效的 R2_BUCKET。')
+  }
+  if (!accessKeyId || !secretAccessKey || !region) {
+    throw new Error('启用 R2 前必须设置 R2_ACCESS_KEY_ID、R2_SECRET_ACCESS_KEY 和 R2_REGION。')
+  }
+  if (region !== 'auto') {
+    throw new Error('R2_REGION 必须是 auto。')
+  }
+  return {
+    mode: 'r2' as const,
+    accountId,
+    bucket,
+    region,
+    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+  }
+}
 
 const getGoogleOAuthMode = (environment: RuntimeEnvironment): GoogleOAuthMode => {
   const mode = environment.GOOGLE_OAUTH_MODE?.trim() || 'disabled'
@@ -64,6 +105,7 @@ export const createRuntimeConfig = (environment: RuntimeEnvironment = process.en
     ]),
   )
   const googleOAuthMode = getGoogleOAuthMode(environment)
+  const objectStorage = getObjectStorageConfig(environment, configuredAppEnv)
   const localGoogleMockDiscoveryUrl =
     environment.GOOGLE_OAUTH_DISCOVERY_URL?.trim() ||
     'http://127.0.0.1:55441/.well-known/openid-configuration'
@@ -119,6 +161,7 @@ export const createRuntimeConfig = (environment: RuntimeEnvironment = process.en
 
   return {
     appEnv: configuredAppEnv,
+    objectStorage,
     allowedOrigins,
     csrfOrigins,
     authBaseUrl: configuredAuthBaseUrl,

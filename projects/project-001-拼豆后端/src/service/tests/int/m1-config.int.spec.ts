@@ -99,6 +99,12 @@ describe('M1 环境白名单解析', () => {
       ALLOWED_ORIGINS: 'https://test.pixomosaic.com',
       CSRF_ORIGINS: 'https://test.pixomosaic.com',
       MAIL_TRANSPORT: 'resend',
+      OBJECT_STORAGE_MODE: 'r2',
+      R2_ACCOUNT_ID: 'a'.repeat(32),
+      R2_BUCKET: 'pixomosaic-team-test',
+      R2_ACCESS_KEY_ID: 'not-a-real-access-key',
+      R2_SECRET_ACCESS_KEY: 'not-a-real-secret-key',
+      R2_REGION: 'auto',
     }
 
     expect(() => createRuntimeConfig(teamTestEnvironment)).toThrow(

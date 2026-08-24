@@ -10,7 +10,8 @@ import { inspectImageUpload, parseMimeType, type AssetMimeType } from '@/assets/
 import type { ActiveSessionContext } from '@/auth/require-session'
 import { recordAuthenticatedAuditEvent } from '@/security/audit'
 import { withIdempotentWrite } from '@/works/idempotency'
-import { deleteLocalObject, writeLocalObjectIfAbsent, readLocalObject } from '@/storage/local-object-store'
+import { getObjectStore } from '@/storage'
+import { ObjectStoreNotFoundError, ObjectStoreUnavailableError } from '@/storage/object-store'
 
 type DatabaseRow = Record<string, unknown>
 type QueryResult = { rows: DatabaseRow[] }
@@ -114,13 +115,13 @@ export const uploadCommunityMedia = async (
     execute: async () => {
       const mediaId = toId('community_media')
       const storageKey = `community/${context.user.id}/${mediaId}`
-      await writeLocalObjectIfAbsent(storageKey, content)
+      await getObjectStore().putIfAbsent(storageKey, content)
       try {
         const db = await getDatabase(context)
         await db.execute(sql`INSERT INTO community_post_media (public_id, post_id, uploader_id, role, sort_order, mime_type, size_bytes, sha256, storage_key, status, alt_text)
           VALUES (${mediaId}, NULL, ${context.user.id}, ${role}, 0, ${mimeType}, ${inspected.sizeBytes}, ${inspected.sha256}, ${storageKey}, 'ready', ${altText})`)
       } catch (error) {
-        await deleteLocalObject(storageKey).catch(() => undefined)
+        await getObjectStore().delete(storageKey).catch(() => undefined)
         throw error
       }
       return { media: { mediaId, role, mimeType, sizeBytes: inspected.sizeBytes, status: 'ready' as const } }
@@ -136,10 +137,13 @@ export const readCommunityMedia = async (payload: ActiveSessionContext['payload'
   const row = result.rows[0]
   if (!row || typeof row.storage_key !== 'string' || !row.storage_key.startsWith('community/')) throw new BusinessApiError('COMMUNITY_MEDIA_NOT_FOUND', '社区媒体不存在。', 404)
   try {
-    return { content: await readLocalObject(row.storage_key), mimeType: asString(row.mime_type) }
+    return { content: await getObjectStore().read(row.storage_key), mimeType: asString(row.mime_type) }
   } catch (error) {
-    if (error instanceof BusinessApiError && (error.code === 'ASSET_NOT_FOUND' || error.code === 'LOCAL_STORAGE_UNAVAILABLE')) {
+    if (error instanceof ObjectStoreNotFoundError) {
       throw new BusinessApiError('COMMUNITY_MEDIA_NOT_FOUND', '社区媒体不存在。', 404)
+    }
+    if (error instanceof ObjectStoreUnavailableError) {
+      throw new BusinessApiError('COMMUNITY_MEDIA_STORAGE_UNAVAILABLE', '社区媒体暂时不可用，请稍后重试。', 503)
     }
     throw error
   }

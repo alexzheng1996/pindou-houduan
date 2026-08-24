@@ -1,6 +1,5 @@
-// 文件开头说明：M1 私有图片的业务服务。WorkAsset 只保存元数据，实际字节经
-// local-object-store 在本机验证；以后替换 R2/S3 只能改变存储适配，不改变权限、
-// 哈希、限额或 API 契约。
+// 文件开头说明：M1 私有图片的业务服务。WorkAsset 只保存元数据，实际字节经统一
+// ObjectStore 端口写入；local 与 R2 只替换存储适配，不改变权限、哈希、限额或 API 契约。
 import { randomUUID } from 'crypto'
 
 import { sql } from '@payloadcms/db-postgres'
@@ -10,13 +9,13 @@ import { BusinessApiError } from '@/api/business-http'
 import type { ActiveSessionContext } from '@/auth/require-session'
 import type { Work, WorkAsset } from '@/payload-types'
 import { recordAuthenticatedAuditEvent } from '@/security/audit'
+import { getObjectStore } from '@/storage'
 import {
-  createLocalStorageKey,
-  deleteLocalObject,
-  localObjectExists,
-  readLocalObject,
-  writeLocalObjectIfAbsent,
-} from '@/storage/local-object-store'
+  createObjectStorageKey,
+  ObjectStoreConflictError,
+  ObjectStoreNotFoundError,
+  ObjectStoreUnavailableError,
+} from '@/storage/object-store'
 import {
   type AssetMimeType,
   type ValidatedConfirmAssetInput,
@@ -63,6 +62,42 @@ type ConfirmResponse = {
 
 type TransactionDatabase = {
   execute: (query: unknown) => Promise<{ rows: Array<{ asset_count: number | string; total_bytes: number | string }> }>
+}
+
+const readStoredObject = async (storageKey: string): Promise<Buffer> => {
+  try {
+    return await getObjectStore().read(storageKey)
+  } catch (error) {
+    if (error instanceof ObjectStoreNotFoundError) {
+      throw new BusinessApiError('ASSET_NOT_FOUND', '无法访问该文件。', 404)
+    }
+    if (error instanceof ObjectStoreUnavailableError) {
+      throw new BusinessApiError('ASSET_STORAGE_UNAVAILABLE', '文件存储暂时不可用，请稍后重试。', 503)
+    }
+    throw error
+  }
+}
+
+const deleteStoredObject = async (storageKey: string): Promise<void> => {
+  try {
+    await getObjectStore().delete(storageKey)
+  } catch (error) {
+    if (error instanceof ObjectStoreUnavailableError) {
+      throw new BusinessApiError('ASSET_STORAGE_UNAVAILABLE', '文件存储暂时不可用，请稍后重试。', 503)
+    }
+    throw error
+  }
+}
+
+const storedObjectExists = async (storageKey: string): Promise<boolean> => {
+  try {
+    return await getObjectStore().exists(storageKey)
+  } catch (error) {
+    if (error instanceof ObjectStoreUnavailableError) {
+      throw new BusinessApiError('ASSET_STORAGE_UNAVAILABLE', '文件存储暂时不可用，请稍后重试。', 503)
+    }
+    throw error
+  }
 }
 
 const createAssetId = (): string => `asset_${randomUUID().replaceAll('-', '')}`
@@ -238,7 +273,7 @@ export const createUploadIntent = async (
           mimeType: input.mimeType,
           sizeBytes: input.sizeBytes,
           sha256: input.sha256,
-          storageKey: createLocalStorageKey(context.user.id, publicWorkId, assetId),
+          storageKey: createObjectStorageKey(context.user.id, publicWorkId, assetId),
           uploadExpiresAt: expiresAt,
         },
         overrideAccess: false,
@@ -282,7 +317,7 @@ export const uploadAssetBytes = async (
   }
   if (asset.status === 'uploaded' || asset.status === 'ready') {
     const inspectedIncoming = await inspectImageUpload(content, expectedMimeType)
-    const existing = await readLocalObject(asset.storageKey)
+    const existing = await readStoredObject(asset.storageKey)
     const inspectedExisting = await inspectImageUpload(existing, expectedMimeType)
     if (
       inspectedIncoming.sha256 === asset.sha256 &&
@@ -301,7 +336,16 @@ export const uploadAssetBytes = async (
     if (inspected.sizeBytes !== asset.sizeBytes || inspected.sha256 !== asset.sha256) {
       throw new BusinessApiError('ASSET_VALIDATION_FAILED', '文件大小或内容校验失败。', 422)
     }
-    await writeLocalObjectIfAbsent(asset.storageKey, content)
+    try {
+      await getObjectStore().putIfAbsent(asset.storageKey, content)
+    } catch (error) {
+      if (!(error instanceof ObjectStoreConflictError)) throw error
+      const existing = await readStoredObject(asset.storageKey)
+      const inspectedExisting = await inspectImageUpload(existing, expectedMimeType)
+      if (inspectedExisting.sha256 !== inspected.sha256 || inspectedExisting.sizeBytes !== inspected.sizeBytes) {
+        throw new BusinessApiError('ASSET_UPLOAD_CONFLICT', '该文件已存在，不能覆盖。', 409)
+      }
+    }
     const startedTransaction = await initTransaction(context.req as PayloadRequest)
     if (!startedTransaction && !context.req.transactionID) {
       throw new BusinessApiError('TRANSACTION_UNAVAILABLE', '服务器暂时无法处理请求。', 500)
@@ -337,9 +381,12 @@ export const uploadAssetBytes = async (
       throw transactionError
     }
   } catch (error) {
+    if (error instanceof ObjectStoreUnavailableError) {
+      throw new BusinessApiError('ASSET_STORAGE_UNAVAILABLE', '文件存储暂时不可用，请稍后重试。', 503)
+    }
     if (error instanceof BusinessApiError) {
       if (error.code !== 'ASSET_UPLOAD_CONFLICT') {
-        await deleteLocalObject(asset.storageKey)
+        await deleteStoredObject(asset.storageKey)
         await context.payload.update({
           collection: 'work-assets',
           id: asset.id,
@@ -384,14 +431,14 @@ export const confirmAsset = async (
         throw new BusinessApiError('ASSET_VALIDATION_FAILED', '文件尚未通过上传校验。', 422)
       }
 
-      const content = await readLocalObject(asset.storageKey)
+      const content = await readStoredObject(asset.storageKey)
       const inspected = await inspectImageUpload(content, asset.mimeType as AssetMimeType)
       if (
         inspected.sha256 !== asset.sha256 ||
         inspected.sizeBytes !== asset.sizeBytes ||
         inspected.detectedMimeType !== asset.mimeType
       ) {
-        await deleteLocalObject(asset.storageKey)
+        await deleteStoredObject(asset.storageKey)
         await context.payload.update({
           collection: 'work-assets',
           id: asset.id,
@@ -434,10 +481,10 @@ export const readReadyAsset = async (
 ): Promise<{ content: Buffer; mimeType: AssetMimeType }> => {
   const work = await getOwnedWritableWork(context, publicWorkId)
   const asset = await findOwnedAsset(context, work, assetId)
-  if (asset.status !== 'ready' || !(await localObjectExists(asset.storageKey))) {
+  if (asset.status !== 'ready' || !(await storedObjectExists(asset.storageKey))) {
     throw new BusinessApiError('ASSET_NOT_FOUND', '无法访问该文件。', 404)
   }
-  return { content: await readLocalObject(asset.storageKey), mimeType: asset.mimeType as AssetMimeType }
+  return { content: await readStoredObject(asset.storageKey), mimeType: asset.mimeType as AssetMimeType }
 }
 
 export const purgeExpiredOrphanedAssets = async (
@@ -463,7 +510,7 @@ export const purgeExpiredOrphanedAssets = async (
     },
   })
   for (const asset of result.docs) {
-    await deleteLocalObject(asset.storageKey)
+    await deleteStoredObject(asset.storageKey)
     await context.payload.delete({
       collection: 'work-assets',
       id: asset.id,
