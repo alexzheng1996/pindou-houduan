@@ -41,7 +41,7 @@ export const createBusinessCorsHeaders = (
 ): Headers => {
   const headers = new Headers({
     'Access-Control-Allow-Methods': methods,
-    'Access-Control-Allow-Headers': 'Content-Type, Idempotency-Key, X-Requested-With',
+    'Access-Control-Allow-Headers': 'Content-Type, Idempotency-Key, X-Requested-With, X-Community-Media-Role, X-Community-Media-Alt',
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Max-Age': '600',
     Vary: 'Origin',

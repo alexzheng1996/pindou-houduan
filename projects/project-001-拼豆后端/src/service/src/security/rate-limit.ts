@@ -25,6 +25,10 @@ type RateLimitPolicy = {
     | 'inventory-write'
     | 'work-inventory-read'
     | 'work-write'
+    | 'library-read'
+    | 'library-write'
+    | 'community-read'
+    | 'community-write'
   windowMilliseconds: number
 }
 
@@ -39,6 +43,10 @@ const policies = {
   // 上限需要允许用户在导入已有本地作品时完成 50 份云端首存；仍能阻断无节制
   // 自动保存。真实 team-test 流量与前端自动保存策略确认后再收紧。
   workWrite: { maximum: 120, scope: 'work-write', windowMilliseconds: 10 * 60_000 },
+  libraryRead: { maximum: 120, scope: 'library-read', windowMilliseconds: 10 * 60_000 },
+  libraryWrite: { maximum: 60, scope: 'library-write', windowMilliseconds: 10 * 60_000 },
+  communityRead: { maximum: 180, scope: 'community-read', windowMilliseconds: 10 * 60_000 },
+  communityWrite: { maximum: 60, scope: 'community-write', windowMilliseconds: 10 * 60_000 },
 } as const satisfies Record<string, RateLimitPolicy>
 
 export type AuthenticatedRateLimit = keyof typeof policies

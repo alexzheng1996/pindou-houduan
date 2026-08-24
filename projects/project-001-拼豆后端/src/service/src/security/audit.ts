@@ -37,6 +37,14 @@ export type SecurityAuditAction =
   | 'work.deletion_requested'
   | 'work.document_saved'
   | 'work.draft_cancelled'
+  | 'work.restored'
+  | 'library.folder_created'
+  | 'library.label_created'
+  | 'library.metadata_updated'
+  | 'community.published'
+  | 'community.copied'
+  | 'community.interaction'
+  | 'community.reported'
 
 export type SecurityAuditInput = {
   action: SecurityAuditAction
@@ -45,7 +53,7 @@ export type SecurityAuditInput = {
   reasonCode?: string
   requestId: string
   resourcePublicId?: string
-  resourceType?: 'asset' | 'inventory_import' | 'inventory_operation' | 'work'
+  resourceType?: 'asset' | 'inventory_import' | 'inventory_operation' | 'work' | 'library' | 'community'
   route: string
 }
 
