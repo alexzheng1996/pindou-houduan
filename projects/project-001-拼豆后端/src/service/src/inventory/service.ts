@@ -20,6 +20,7 @@ import {
 } from './color-mapping'
 
 const operationIdPattern = /^inventory_operation_[a-f0-9]{32}$/
+const inventoryItemIdPattern = /^inventory_[a-f0-9]{32}$/
 const workIdPattern = /^work_[a-f0-9]{32}$/
 const maxQuantity = 10_000_000
 const maxNoteLength = 500
@@ -1195,6 +1196,15 @@ export const listInventoryItems = async (
   if (health !== null && health !== 'normal' && health !== 'warning' && health !== 'out_of_stock' && health !== 'negative') {
     throw new BusinessApiError('INVENTORY_INPUT_INVALID', '库存筛选条件无效。', 422)
   }
+  const rawQuery = searchParams.get('query')
+  const query = rawQuery?.trim() || null
+  if (query !== null && Array.from(query).length > 64) {
+    throw new BusinessApiError('INVENTORY_INPUT_INVALID', '库存搜索条件过长。', 422)
+  }
+  const cursor = searchParams.get('cursor')
+  if (cursor !== null && !inventoryItemIdPattern.test(cursor)) {
+    throw new BusinessApiError('INVENTORY_INPUT_INVALID', '库存分页参数无效。', 422)
+  }
   const rawLimit = searchParams.get('limit') ?? '50'
   if (!/^\d+$/.test(rawLimit)) {
     throw new BusinessApiError('INVENTORY_INPUT_INVALID', '库存分页参数无效。', 422)
@@ -1209,13 +1219,43 @@ export const listInventoryItems = async (
   if (!pool) {
     throw new BusinessApiError('TRANSACTION_UNAVAILABLE', '服务器暂时无法处理请求。', 500)
   }
+  const cursorRow = cursor === null
+    ? null
+    : (await pool.query(
+      `SELECT updated_at, public_id FROM inventory_items WHERE owner_id = $1 AND public_id = $2`,
+      [context.user.id, cursor],
+    )).rows[0]
+  if (cursor !== null && !cursorRow) {
+    throw new BusinessApiError('INVENTORY_INPUT_INVALID', '库存分页参数无效。', 422)
+  }
+  const parameters: unknown[] = [context.user.id]
+  const conditions = ['owner_id = $1']
+  if (beadSizeMm !== null) {
+    parameters.push(beadSizeMm)
+    conditions.push(`bead_size_mm = $${parameters.length}`)
+  }
+  if (health === 'normal') conditions.push('quantity >= 100')
+  if (health === 'warning') conditions.push('quantity >= 50 AND quantity < 100')
+  if (health === 'out_of_stock') conditions.push('quantity >= 0 AND quantity < 50')
+  if (health === 'negative') conditions.push('quantity < 0')
+  if (query !== null) {
+    parameters.push(`%${query.replace(/[\\%_]/g, '\\$&')}%`)
+    conditions.push(`color_hex ILIKE $${parameters.length} ESCAPE '\\'`)
+  }
+  if (cursorRow) {
+    parameters.push(cursorRow.updated_at, cursorRow.public_id)
+    const updatedAtParameter = parameters.length - 1
+    const publicIdParameter = parameters.length
+    conditions.push(`(updated_at < $${updatedAtParameter} OR (updated_at = $${updatedAtParameter} AND public_id > $${publicIdParameter}))`)
+  }
+  parameters.push(limit + 1)
   const result = await pool.query(
     `SELECT id, public_id, bead_size_mm, color_hex, quantity, revision, updated_at
      FROM inventory_items
-     WHERE owner_id = $1
+     WHERE ${conditions.join(' AND ')}
      ORDER BY updated_at DESC, public_id ASC
-     LIMIT $2`,
-    [context.user.id, 100],
+     LIMIT $${parameters.length}`,
+    parameters,
   )
   const items = result.rows.map(asInventoryItem).map((item) => ({
     itemId: item.publicId,
@@ -1226,11 +1266,9 @@ export const listInventoryItems = async (
     health: item.quantity < 0 ? 'negative' : toHealth(item.quantity),
     updatedAt: item.updatedAt,
   }))
-  const filteredItems = items
-    .filter((item) => beadSizeMm === null || item.beadSizeMm === beadSizeMm)
-    .filter((item) => health === null || item.health === health)
-    .slice(0, limit)
-  return { items: filteredItems, nextCursor: null }
+  const hasNextPage = items.length > limit
+  const page = items.slice(0, limit)
+  return { items: page, nextCursor: hasNextPage ? page.at(-1)?.itemId ?? null : null }
 }
 
 export const listInventoryOperations = async (

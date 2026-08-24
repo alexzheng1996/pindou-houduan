@@ -156,6 +156,41 @@ describe('M1.1 个人豆仓账本与制作扣减', () => {
     await expect(secondInventory.json()).resolves.toMatchObject({ items: [] })
   })
 
+  it('库存列表支持稳定分页和 HEX 查询，不遗漏 100 条以后的余额', async () => {
+    const user = await signInVerifiedUser()
+    const lines = Array.from({ length: 101 }, (_, index) => ({
+      colorHex: `#${String(index + 1).padStart(6, '0')}`,
+      quantity: 100,
+    }))
+    const firstAdjustment = await adjustInventoryPost(jsonRequest('/api/v1/inventory/adjustments', 'POST', user.cookie, {
+      kind: 'receipt', beadSizeMm: 2.6, lines: lines.slice(0, 100),
+    }, `page-first-${randomUUID()}`))
+    expect(firstAdjustment.status, await firstAdjustment.clone().text()).toBe(200)
+    const secondAdjustment = await adjustInventoryPost(jsonRequest('/api/v1/inventory/adjustments', 'POST', user.cookie, {
+      kind: 'receipt', beadSizeMm: 2.6, lines: lines.slice(100),
+    }, `page-second-${randomUUID()}`))
+    expect(secondAdjustment.status, await secondAdjustment.clone().text()).toBe(200)
+
+    const firstPage = await getInventory(jsonRequest('/api/v1/inventory?limit=100', 'GET', user.cookie))
+    expect(firstPage.status, await firstPage.clone().text()).toBe(200)
+    const firstPageBody = await firstPage.json() as { items: Array<{ itemId: string }>; nextCursor: string | null }
+    expect(firstPageBody.items).toHaveLength(100)
+    expect(firstPageBody.nextCursor).toMatch(/^inventory_[a-f0-9]{32}$/)
+
+    const secondPage = await getInventory(jsonRequest(`/api/v1/inventory?limit=100&cursor=${encodeURIComponent(firstPageBody.nextCursor!)}`, 'GET', user.cookie))
+    expect(secondPage.status, await secondPage.clone().text()).toBe(200)
+    const secondPageBody = await secondPage.json() as { items: Array<{ itemId: string }>; nextCursor: string | null }
+    expect(secondPageBody.items).toHaveLength(1)
+    expect(secondPageBody.nextCursor).toBeNull()
+    expect(new Set([...firstPageBody.items, ...secondPageBody.items].map((item) => item.itemId)).size).toBe(101)
+
+    const filtered = await getInventory(jsonRequest('/api/v1/inventory?query=%23000001', 'GET', user.cookie))
+    expect(filtered.status, await filtered.clone().text()).toBe(200)
+    await expect(filtered.json()).resolves.toMatchObject({
+      items: [expect.objectContaining({ colorHex: '#000001', quantity: 100 })],
+    })
+  })
+
   it('库存状态和完成制作使用服务器保存的 pattern 用量，允许负库存且幂等', async () => {
     const user = await signInVerifiedUser()
     const workId = await createActivePattern(user.cookie)
