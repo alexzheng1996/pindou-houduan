@@ -18,7 +18,7 @@
 
 ## 当前状态
 
-已于 2026-08-18 立项。**M0 技术基础、M1 本地邮箱认证、私密作品模型、`pattern` / `board` 的 draft 创建、读取和激活更新、文件闭环、审计反滥用，以及 Google 本机 OIDC Mock 均已完成；M1.1 个人豆仓的后端账本、作品规格兼容、CSV 导入和缺货导出已完成本机验证。已获授权完成 PixoMosaic 前端的云端作品/豆仓代码接入、静态检查和本机真实浏览器 HTTP 闭环验证。当前结论是“本机浏览器 HTTP 技术 Go”，不等同于 team-test/生产完整前后端联调；云端 team-test 只在部署前检查、费用说明和业务方再次确认后才创建。**
+已于 2026-08-18 立项。**M0 技术基础、M1 本地邮箱认证、私密作品模型、`pattern` / `board` 的 draft 创建、读取和激活更新、文件闭环、审计反滥用，以及 Google 本机 OIDC Mock 均已完成；M1.1 个人豆仓的后端账本、作品规格兼容、CSV 导入和缺货导出已完成本机验证。后端 M1/M1.1 已提交为 `9b09978` / `849d681`；PixoMosaic 前端云端作品/豆仓接入已在其独立仓库提交为 `f809556`。当前结论是“本机浏览器 HTTP 技术 Go”，不等同于 team-test/生产完整前后端联调；完整 team-test 仍先要补齐私有 R2 存储适配、受控迁移发布和清理调度，再由业务方按费用 Go 决定是否创建云资源。**
 
 - 已固定 Node `24.19.0`、pnpm `10.33.2`、Payload 与 PostgreSQL 适配器 `3.88.0`，并完成本地 PostgreSQL、显式迁移、`/health`、自动化测试与 Docker 生产模式健康检查。
 - M1 的 `/api/v1` 交换规则和 `WorkDocument` v1 数据契约已冻结为工程基线；已完成 PixoMosaic 的主动云端保存/打开、服务端库存展示、`/inventory` 账本/CSV 与制作扣减 UI 代码接入，并以真实浏览器验证 Cookie 会话、作品保存、库存导入/回滚、制作扣减/回滚和 A/B 隔离；浏览器未把本地草稿、Data URL 或用户标识送入业务 API。该结果仅覆盖本机 HTTP，不代表 team-test/生产完整前后端联调。
@@ -46,6 +46,7 @@
 - `docs/specs/02c-M1-Google本地OIDC-Mock-spec.md`：Google 本机 OIDC Mock 的安全门禁、已验证范围与真实接入边界。
 - `docs/specs/02d-M1-真实邮件适配器准备-spec.md`：官方 Resend 适配器的本地安全替身、team-test 启用条件与不做项。
 - `docs/specs/02e-M1.1-个人豆仓与制作扣减-spec.md`：个人豆仓账本、事务、图纸扣减、导入、色号治理、联调顺序和验收。
+- `docs/specs/02f-M1-team-test-私有R2与发布调度-spec.md`：team-test 前置的私有 R2 存储、受控迁移发布、清理调度、成本与验收门禁；待业务方审阅。
 - `docs/specs/01-M0-基础架构与M1接口冻结-spec.md`：M0-A / M0-B 的实施范围与验收。
 - `docs/接口/M1-作品数据契约.md`：单图图纸和画板云端作品的 v1 字段、文件与兼容边界。
 - `docs/验收/M1-PixoMosaic-只读契约核对-2026-08-22.md`：当前前端数据与 v1 的映射、差异和首次联调清单；不包含前端改动。
@@ -55,6 +56,7 @@
 - `docs/实施准备/M1-team-test-部署前检查与费用Go.md`：本地完成后的费用、停止/删除方案和 team-test 创建授权检查。
 - `docs/复用评估/M1-认证方案核查.md`：Google 登录的成熟方案评估与 PoC 门禁。
 - `handoff/M0-技术基础完成与M1-Go清单.md`：给总调度和业务方的 M0 收口、M1 Go/No-Go 清单。
+- `handoff/M1.1-本机验证完成与team-test准备-2026-08-24.md`：本机验证基线、team-test No-Go 门禁、后续固定顺序和前端“新建画板”补充任务。
 
 ## 运行或验证方式
 
@@ -64,7 +66,7 @@
 2. `docker compose up -d postgres && fnm exec --using ../../.node-version pnpm migrate:status`
 3. `fnm exec --using ../../.node-version pnpm lint && fnm exec --using ../../.node-version pnpm test && fnm exec --using ../../.node-version pnpm build`；仅本机验证需要清理过期资产、作品、安全记录或库存导入预览时执行 `fnm exec --using ../../.node-version pnpm cleanup:assets` / `fnm exec --using ../../.node-version pnpm cleanup:works` / `fnm exec --using ../../.node-version pnpm cleanup:security` / `fnm exec --using ../../.node-version pnpm cleanup:inventory-imports`。
 
-开发服务仅监听本机：`fnm exec --using ../../.node-version pnpm dev`，再访问 `http://127.0.0.1:3000/health`。不得用当前机器的 Node 25 代替项目基线；不得在没有 M1 Go 的情况下创建或连接任何团队/生产云资源。
+开发服务仅监听本机：`fnm exec --using ../../.node-version pnpm dev`，再访问 `http://127.0.0.1:3002/health`。本机 PixoMosaic 单图/画板前端分别使用 `3050`/`3100`；不得用当前机器的 Node 25 代替项目基线；不得在没有 M1 Go 的情况下创建或连接任何团队/生产云资源。
 
 ## 验收标准
 

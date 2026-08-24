@@ -19,7 +19,7 @@ import { getWorkInventoryShortageCsv } from '@/inventory/service'
 import config from '@/payload.config'
 
 let payload: Payload
-const origin = 'http://127.0.0.1:3000'
+const origin = 'http://127.0.0.1:3002'
 
 const patternDocument = (documentRevision: number, materialListRevision: number) => ({
   schemaVersion: 1,

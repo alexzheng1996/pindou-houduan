@@ -21,7 +21,7 @@ import config from '@/payload.config'
 
 let payload: Payload
 
-const origin = 'http://127.0.0.1:3000'
+const origin = 'http://127.0.0.1:3002'
 const checksum = (value: Buffer): string => createHash('sha256').update(value).digest('hex')
 
 const validCreateBody = () => ({

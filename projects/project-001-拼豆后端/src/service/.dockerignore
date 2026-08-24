@@ -2,10 +2,12 @@
 .env.*
 !.env.example
 .next
+.next-*
 node_modules
 test-results
 playwright-report
 coverage
 data/local-object-store
+tsconfig.tsbuildinfo
 .git
 .DS_Store

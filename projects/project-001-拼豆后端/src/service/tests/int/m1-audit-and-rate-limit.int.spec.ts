@@ -13,7 +13,7 @@ import config from '@/payload.config'
 
 let payload: Payload
 
-const origin = 'http://127.0.0.1:3000'
+const origin = 'http://127.0.0.1:3002'
 
 const validCreateBody = () => ({
   title: '审计测试图纸',

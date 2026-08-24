@@ -72,8 +72,14 @@ describe('M1 环境白名单解析', () => {
   it('本地允许脱敏测试注册，并冻结 Better Auth 路由与可信来源', () => {
     expect(isRegistrationEmailAllowed('local-test@example.com')).toBe(true)
     expect(runtimeConfig.authBasePath).toBe('/api/v1/auth')
-    expect(runtimeConfig.authTrustedOrigins).toContain('http://127.0.0.1:3000')
-    expect(runtimeConfig.allowedOrigins).toContain('http://127.0.0.1:3000')
+    expect(runtimeConfig.authBaseUrl).toBe('http://127.0.0.1:3002')
+    expect(runtimeConfig.authTrustedOrigins).toContain('http://127.0.0.1:3050')
+    expect(runtimeConfig.allowedOrigins).toContain('http://127.0.0.1:3050')
+    expect(runtimeConfig.allowedOrigins).toContain('http://127.0.0.1:3100')
+  })
+
+  it('APP_ENV 只接受 local 或 team-test，避免拼写错误绕过环境门禁', () => {
+    expect(() => createRuntimeConfig({ APP_ENV: 'staging' })).toThrow('APP_ENV 只能是 local 或 team-test')
   })
 
   it('本机邮件只使用进程内 outbox 适配器，不会退回控制台或调用真实 Resend', () => {

@@ -46,8 +46,8 @@ describe('M1 私密作品模型与会话边界', () => {
   })
 
   it('未登录请求不能伪造业务身份，活动会话读取数据库权威账号状态', async () => {
-    const request = new Request('http://127.0.0.1:3000/api/v1/works', {
-      headers: { origin: 'http://127.0.0.1:3000' },
+    const request = new Request('http://127.0.0.1:3002/api/v1/works', {
+      headers: { origin: 'http://127.0.0.1:3002' },
     })
 
     await expect(requireActiveSession(request, 'test-request')).rejects.toMatchObject({

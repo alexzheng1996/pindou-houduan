@@ -5,7 +5,7 @@
 ## 作用与边界
 
 - 技术基线：Node `24.19.0`、pnpm `10.33.2`、Payload/`@payloadcms/db-postgres` `3.88.0`、PostgreSQL 16。
-- 仅本机开发接口：`GET http://127.0.0.1:3000/health`。开发服务只监听 `127.0.0.1`；健康检查不会返回连接串、用户信息或异常原文。
+- 本机后端接口：`GET http://127.0.0.1:3002/health`。PixoMosaic 单图/画板前端分别为 `3050`/`3100`；开发服务只监听 `127.0.0.1`，健康检查不会返回连接串、用户信息或异常原文。
 - 本地数据库容器仅绑定 `127.0.0.1:55440`，不得写入真实用户、订单、地址或文件。
 - M0 已关闭 GraphQL；Payload 默认 REST/Admin 面不是 PixoMosaic 前端的业务契约。M1 只会实现文档定义的 `/api/v1`。
 - M1 本地基础已固定 `user/staff/admin` 角色、账号状态、认证来源、条款字段、邮箱验证、登录失败锁定和 Cookie/CORS/CSRF 环境边界；数据库变更通过 `20260818_232836_m1_user_account_fields` 显式迁移。
@@ -28,7 +28,7 @@ fnm exec --using ../../.node-version pnpm dev
 另开终端检查：
 
 ```bash
-curl --fail http://127.0.0.1:3000/health
+curl --fail http://127.0.0.1:3002/health
 ```
 
 预期响应为：

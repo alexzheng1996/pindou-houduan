@@ -12,19 +12,19 @@ import config from '@/payload.config'
 let payload: Payload
 
 const request = (path: string, body: Record<string, string>): Request =>
-  new Request(`http://127.0.0.1:3000/api/v1/auth${path}`, {
+  new Request(`http://127.0.0.1:3002/api/v1/auth${path}`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      origin: 'http://127.0.0.1:3000',
+      origin: 'http://127.0.0.1:3002',
     },
     body: JSON.stringify(body),
   })
 
 const getRequest = (path: string, cookie?: string): Request =>
-  new Request(`http://127.0.0.1:3000/api/v1/auth${path}`, {
+  new Request(`http://127.0.0.1:3002/api/v1/auth${path}`, {
     headers: {
-      origin: 'http://127.0.0.1:3000',
+      origin: 'http://127.0.0.1:3002',
       ...(cookie ? { cookie } : {}),
     },
   })

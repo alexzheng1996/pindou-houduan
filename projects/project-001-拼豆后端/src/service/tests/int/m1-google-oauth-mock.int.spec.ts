@@ -10,7 +10,7 @@ import { GET, POST } from '@/app/api/v1/auth/[...all]/route'
 import { clearLocalMailOutbox, getLocalMailOutbox } from '@/auth/config'
 import config from '@/payload.config'
 
-const origin = 'http://127.0.0.1:3000'
+const origin = 'http://127.0.0.1:3002'
 
 let payload: Payload
 

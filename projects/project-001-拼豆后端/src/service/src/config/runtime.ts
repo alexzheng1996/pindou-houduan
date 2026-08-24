@@ -6,7 +6,10 @@ export const parseUrlList = (value: string | undefined): string[] =>
     .map((item) => item.trim())
     .filter(Boolean)
 
-const localAuthBaseUrl = 'http://127.0.0.1:3000'
+// 本机 API 仅监听 3002；PixoMosaic 单图/画板分别运行在 3050/3100。
+// 不再使用 3000，避免与同机其他开发服务冲突。
+const localAuthBaseUrl = 'http://127.0.0.1:3002'
+const localFrontendOrigins = ['http://127.0.0.1:3050', 'http://127.0.0.1:3100']
 
 type GoogleOAuthMode = 'disabled' | 'google' | 'mock'
 type MailTransport = 'local-outbox' | 'resend'
@@ -39,7 +42,10 @@ export const isProductionLike = process.env.NODE_ENV === 'production' || process
 
 export const createRuntimeConfig = (environment: RuntimeEnvironment = process.env) => {
   const configuredAuthBaseUrl = environment.AUTH_BASE_URL || localAuthBaseUrl
-  const configuredAppEnv = environment.APP_ENV || 'local'
+  const configuredAppEnv = environment.APP_ENV?.trim() || 'local'
+  if (configuredAppEnv !== 'local' && configuredAppEnv !== 'team-test') {
+    throw new Error('APP_ENV 只能是 local 或 team-test。')
+  }
   const configuredAllowedOrigins = parseUrlList(environment.ALLOWED_ORIGINS)
   const configuredCsrfOrigins = parseUrlList(environment.CSRF_ORIGINS)
   const localServiceOrigin = new URL(configuredAuthBaseUrl).origin
@@ -47,14 +53,14 @@ export const createRuntimeConfig = (environment: RuntimeEnvironment = process.en
     new Set([
       ...configuredAllowedOrigins,
       // A fresh local .env must not silently block the service from its own
-      // browser origin. Team-test and production still require explicit lists.
-      ...(configuredAppEnv === 'local' ? [localServiceOrigin] : []),
+      // PixoMosaic browser origins. Team-test still requires explicit lists.
+      ...(configuredAppEnv === 'local' ? [localServiceOrigin, ...localFrontendOrigins] : []),
     ]),
   )
   const csrfOrigins = Array.from(
     new Set([
       ...configuredCsrfOrigins,
-      ...(configuredAppEnv === 'local' ? [localServiceOrigin] : []),
+      ...(configuredAppEnv === 'local' ? [localServiceOrigin, ...localFrontendOrigins] : []),
     ]),
   )
   const googleOAuthMode = getGoogleOAuthMode(environment)
