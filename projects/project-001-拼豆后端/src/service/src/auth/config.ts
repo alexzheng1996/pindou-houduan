@@ -80,7 +80,7 @@ const patchAccountStatusField = (collection: CollectionConfig): CollectionConfig
   }),
 })
 
-export { clearLocalMailOutbox, getLocalMailOutbox } from '@/auth/mail'
+export { clearLocalMailOutbox, getLatestLocalEmailVerificationOtp, getLocalMailOutbox } from '@/auth/mail'
 
 export const betterAuthOptions = {
   secret: getBetterAuthSecret(),

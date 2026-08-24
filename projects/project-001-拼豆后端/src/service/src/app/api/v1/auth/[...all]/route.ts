@@ -4,7 +4,9 @@ import config from '@payload-config'
 import { getPayloadAuth } from 'payload-auth/better-auth/plugin'
 
 import { createAuthCorsHeaders, withAuthCors } from '@/auth/cors'
+import { getLatestLocalEmailVerificationOtp } from '@/auth/mail'
 import { createRequestId } from '@/api/business-http'
+import { runtimeConfig } from '@/config/runtime'
 import {
   clearLoginFailures,
   getLoginBlockResponse,
@@ -26,6 +28,51 @@ const disabledEmailOtpPaths = new Set([
 ])
 
 const emailPasswordSignInPath = '/api/v1/auth/sign-in/email'
+const localTestOtpPath = '/api/v1/auth/local-test/email-verification-otp'
+
+const localTestOtpResponse = (
+  request: Request,
+  requestId: string,
+  status: number,
+  body: Record<string, string>,
+): Response => withAuthCors(request, Response.json(body, { status }), requestId)
+
+const isLoopbackRequest = (request: Request): boolean => {
+  const hostname = new URL(request.url).hostname
+
+  return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1'
+}
+
+const handleLocalTestOtp = (request: Request, requestId: string): Response => {
+  // This endpoint deliberately exposes a one-time value only to the local
+  // manual-test UI. It must not be available when a team-test or production
+  // process is started, even if a caller can reach a loopback address.
+  const allowedOrigin = createAuthCorsHeaders(request).get('Access-Control-Allow-Origin')
+  if (runtimeConfig.appEnv !== 'local' || !isLoopbackRequest(request) || !allowedOrigin) {
+    return localTestOtpResponse(request, requestId, 404, {
+      code: 'LOCAL_TEST_ENDPOINT_UNAVAILABLE',
+      message: '本机测试验证码入口不可用。',
+    })
+  }
+
+  const email = new URL(request.url).searchParams.get('email')?.trim() || ''
+  if (!email || email.length > 320) {
+    return localTestOtpResponse(request, requestId, 400, {
+      code: 'EMAIL_REQUIRED',
+      message: '请填写用于注册的邮箱。',
+    })
+  }
+
+  const otp = getLatestLocalEmailVerificationOtp(email)
+  if (!otp) {
+    return localTestOtpResponse(request, requestId, 404, {
+      code: 'LOCAL_TEST_OTP_NOT_FOUND',
+      message: '未找到当前邮箱的本机验证码，请先重新提交注册。',
+    })
+  }
+
+  return localTestOtpResponse(request, requestId, 200, { otp })
+}
 
 const handle = async (request: Request): Promise<Response> => {
   // emailOTP is used only to meet M1's one-time email-verification rule.
@@ -33,6 +80,9 @@ const handle = async (request: Request): Promise<Response> => {
   const requestId = createRequestId()
   const path = new URL(request.url).pathname
   const auditRoute = path.replace(/^\/api\/v1\/auth/, '/api/v1/auth')
+  if (request.method === 'GET' && path === localTestOtpPath) {
+    return handleLocalTestOtp(request, requestId)
+  }
   if (disabledEmailOtpPaths.has(path)) {
     return withAuthCors(request, new Response(null, { status: 404 }), requestId)
   }

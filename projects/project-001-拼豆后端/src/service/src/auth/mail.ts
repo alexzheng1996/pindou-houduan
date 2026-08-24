@@ -28,6 +28,23 @@ let payloadMailSender: PayloadMailSender | null = null
 
 export const getLocalMailOutbox = (): readonly LocalMailMessage[] => localMailOutbox
 
+/**
+ * 仅供本机浏览器手动验证读取最新的验证码。调用方必须先在路由层确认 local
+ * 环境、回环服务地址和受信前端来源；此处不写日志、不持久化，也不适用于重设令牌。
+ */
+export const getLatestLocalEmailVerificationOtp = (email: string): string | null => {
+  const normalizedEmail = email.trim().toLowerCase()
+
+  for (let index = localMailOutbox.length - 1; index >= 0; index -= 1) {
+    const message = localMailOutbox[index]
+    if (message?.kind === 'email-verification-otp' && message.email.trim().toLowerCase() === normalizedEmail) {
+      return message.otp
+    }
+  }
+
+  return null
+}
+
 export const clearLocalMailOutbox = (): void => {
   localMailOutbox.length = 0
 }

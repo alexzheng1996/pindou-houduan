@@ -5,7 +5,7 @@ import { randomUUID } from 'crypto'
 import { getPayload, type Payload } from 'payload'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { clearLocalMailOutbox, getLocalMailOutbox } from '@/auth/config'
+import { clearLocalMailOutbox, getLatestLocalEmailVerificationOtp, getLocalMailOutbox } from '@/auth/config'
 import { GET, POST } from '@/app/api/v1/auth/[...all]/route'
 import config from '@/payload.config'
 
@@ -125,6 +125,43 @@ describe('M1 一次性邮箱验证', () => {
       }),
     )
     expect(passwordlessLoginResponse.status).toBe(404)
+  })
+
+  it('本机测试读取只返回指定邮箱最新 OTP，不读取重设令牌', async () => {
+    const email = `m1-local-outbox-${randomUUID()}@example.com`
+    const password = 'M1-local-password-2026'
+
+    clearLocalMailOutbox()
+    expect(
+      (
+        await POST(
+          request('/sign-up/email', {
+            name: 'M1 Local Outbox Test',
+            email,
+            password,
+          }),
+        )
+      ).status,
+    ).toBe(200)
+
+    const outbox = getLocalMailOutbox()
+    if (outbox[0]?.kind !== 'email-verification-otp') {
+      throw new Error('本地 outbox 未生成邮箱验证 OTP。')
+    }
+
+    expect(getLatestLocalEmailVerificationOtp(email)).toBe(outbox[0].otp)
+    expect(getLatestLocalEmailVerificationOtp(`missing-${randomUUID()}@example.com`)).toBeNull()
+
+    const localOtpResponse = await GET(
+      getRequest(`/local-test/email-verification-otp?email=${encodeURIComponent(email)}`),
+    )
+    expect(localOtpResponse.status).toBe(200)
+    await expect(localOtpResponse.json()).resolves.toEqual({ otp: outbox[0].otp })
+
+    const missingOtpResponse = await GET(
+      getRequest(`/local-test/email-verification-otp?email=missing-${randomUUID()}%40example.com`),
+    )
+    expect(missingOtpResponse.status).toBe(404)
   })
 
   it('连续 5 次密码失败锁定 15 分钟，停用账号不能创建会话', async () => {
