@@ -10,7 +10,16 @@ import { POST as authPost } from '@/app/api/v1/auth/[...all]/route'
 import { POST as publishCommunity, GET as listCommunity } from '@/app/api/v1/community/route'
 import { GET as getCommunity, PATCH as updateCommunity } from '@/app/api/v1/community/[id]/route'
 import { POST as copyCommunity } from '@/app/api/v1/community/[id]/copy/route'
+import { POST as withdrawCommunity } from '@/app/api/v1/community/[id]/withdraw/route'
 import { POST as uploadCommunityMedia } from '@/app/api/v1/community/media/upload/route'
+import { PUT as toggleCommunity, DELETE as untoggleCommunity } from '@/app/api/v1/community/[id]/[kind]/route'
+import { GET as listLibrary } from '@/app/api/v1/library/route'
+import { GET as listTrash } from '@/app/api/v1/library/trash/route'
+import { POST as createFolder } from '@/app/api/v1/library/folders/route'
+import { POST as createLabel } from '@/app/api/v1/library/labels/route'
+import { PATCH as updateLibraryWork } from '@/app/api/v1/library/works/[id]/route'
+import { DELETE as deleteFolder } from '@/app/api/v1/library/folders/[id]/route'
+import { DELETE as deleteLabel } from '@/app/api/v1/library/labels/[id]/route'
 import { POST as requestWorkDeletion } from '@/app/api/v1/works/[id]/deletion-request/route'
 import { GET as getWork, PATCH as updateWork } from '@/app/api/v1/works/[id]/route'
 import { POST as createWork } from '@/app/api/v1/works/route'
@@ -171,6 +180,12 @@ const publish = async (user: TestUser, workId: string, title: string, allowCopy 
   return ((await response.json()) as { post: { postId: string } }).post.postId
 }
 
+const interaction = async (postId: string, kind: 'like' | 'favorite', user: TestUser, active: boolean, key: string): Promise<Response> => {
+  const request = jsonWrite(`${origin}/api/v1/community/${postId}/${kind}`, {}, user.cookie, active ? 'PUT' : 'DELETE', key)
+  const handler = active ? toggleCommunity : untoggleCommunity
+  return handler(request, { params: Promise.resolve({ id: postId, kind }) })
+}
+
 describe('M2 认证发布、复制与回收主链路', () => {
   beforeAll(async () => { payload = await getPayload({ config: await config }) })
   beforeEach(async () => { await payload.delete({ collection: 'rateLimit', overrideAccess: true, where: {} }) })
@@ -189,6 +204,8 @@ describe('M2 认证发布、复制与回收主链路', () => {
 
     const privateUpdate = await updateWork(jsonWrite(`${origin}/api/v1/works/${workId}/document`, { expectedRevision: 1, document: patternDocument('私有修改不应影响公开快照', 1, '#ABCDEF') }, author.cookie, 'PATCH'), { params: Promise.resolve({ id: workId }) })
     expect(privateUpdate.status).toBe(200)
+    const stillPublished = await getCommunity(new Request(`${origin}/api/v1/community/${postId}`), { params: Promise.resolve({ id: postId }) })
+    expect(stillPublished.status).toBe(200)
     const pool = (payload.db as unknown as { pool: { query: (query: string, values: unknown[]) => Promise<{ rows: Array<{ document: unknown }> }> } }).pool
     const frozen = await pool.query('SELECT v.document FROM published_pattern_versions v JOIN community_posts p ON p.current_version_id = v.id WHERE p.public_id = $1', [postId])
     expect(JSON.stringify(frozen.rows[0]?.document)).toContain('#123456')
@@ -206,11 +223,19 @@ describe('M2 认证发布、复制与回收主链路', () => {
 
     const deletion = await requestWorkDeletion(jsonWrite(`${origin}/api/v1/works/${workId}/deletion-request`, { expectedRevision: 2 }, author.cookie), { params: Promise.resolve({ id: workId }) })
     expect(deletion.status).toBe(200)
+    const authorTrash = await listTrash(new Request(`${origin}/api/v1/library/trash`, { headers: { cookie: author.cookie, origin } }))
+    expect(authorTrash.status).toBe(200)
+    await expect(authorTrash.json()).resolves.toMatchObject({ works: [{ workId, state: 'pending_deletion' }] })
+    const copierTrash = await listTrash(new Request(`${origin}/api/v1/library/trash`, { headers: { cookie: copier.cookie, origin } }))
+    expect(copierTrash.status).toBe(200)
+    await expect(copierTrash.json()).resolves.toMatchObject({ works: [] })
     const afterDeletion = await getCommunity(new Request(`${origin}/api/v1/community/${postId}`), { params: Promise.resolve({ id: postId }) })
     expect(afterDeletion.status).toBe(404)
     const existingCopy = await getWork(new Request(`${origin}/api/v1/works/${copiedBody.work.workId}`, { headers: { cookie: copier.cookie, origin } }), { params: Promise.resolve({ id: copiedBody.work.workId }) })
     expect(existingCopy.status).toBe(200)
 
+    const otherRestore = await restoreWork(jsonWrite(`${origin}/api/v1/library/works/${workId}/restore`, { expectedRevision: 2 }, copier.cookie), { params: Promise.resolve({ id: workId }) })
+    expect(otherRestore.status).toBe(404)
     const restored = await restoreWork(jsonWrite(`${origin}/api/v1/library/works/${workId}/restore`, { expectedRevision: 2 }, author.cookie), { params: Promise.resolve({ id: workId }) })
     expect(restored.status).toBe(200)
     const afterRestore = await getCommunity(new Request(`${origin}/api/v1/community/${postId}`), { params: Promise.resolve({ id: postId }) })
@@ -228,11 +253,20 @@ describe('M2 认证发布、复制与回收主链路', () => {
     const copiedWorkId = ((await copied.json()) as { work: { workId: string } }).work.workId
     const copiedWork = await getWork(new Request(`${origin}/api/v1/works/${copiedWorkId}`, { headers: { cookie: copier.cookie, origin } }), { params: Promise.resolve({ id: copiedWorkId }) })
     expect(copiedWork.status).toBe(200)
-    const copiedDocument = (await copiedWork.json()) as { work: { document: { board: { layers: Array<Record<string, unknown>> } } } }
+    const copiedDocument = (await copiedWork.json()) as { work: { document: { title: string; materialList: { generatedFromRevision: number }; board: { layers: Array<Record<string, unknown>> } } } }
     const copiedLayer = copiedDocument.work.document.board.layers[0]
     expect(copiedLayer).toMatchObject({ sourceAssetId: null, thumbnailAssetId: null, regenerationCapability: 'unavailable' })
     expect(JSON.stringify(copiedDocument)).not.toContain(source.originalId)
     expect(JSON.stringify(copiedDocument)).not.toContain(source.thumbnailId)
+
+    const editedCopyDocument = structuredClone(copiedDocument.work.document)
+    editedCopyDocument.title = '复制后的画板继续编辑'
+    editedCopyDocument.materialList.generatedFromRevision = 2
+    editedCopyDocument.board.layers[0].name = '已净化图层'
+    const editedCopy = await updateWork(jsonWrite(`${origin}/api/v1/works/${copiedWorkId}/document`, {
+      expectedRevision: 1, document: editedCopyDocument,
+    }, copier.cookie, 'PATCH'), { params: Promise.resolve({ id: copiedWorkId }) })
+    expect(editedCopy.status).toBe(200)
 
     const disableCopy = await updateCommunity(jsonWrite(`${origin}/api/v1/community/${postId}`, { allowCopy: false }, author.cookie, 'PATCH'), { params: Promise.resolve({ id: postId }) })
     if (disableCopy.status !== 200) throw new Error(`关闭复制失败 ${disableCopy.status}: ${JSON.stringify(await disableCopy.json())}`)
@@ -242,5 +276,76 @@ describe('M2 认证发布、复制与回收主链路', () => {
 
     const anonymousList = await listCommunity(new Request(`${origin}/api/v1/community?q=M2`))
     expect(anonymousList.status).toBe(200)
+  })
+
+  it('图纸册对象按 owner 隔离，互动重试幂等且不写豆仓账本', async () => {
+    const author = await signedInUser('M2 Library Author')
+    const other = await signedInUser('M2 Library Other')
+    const workId = await createActivePattern(author, '图纸册隔离作品')
+    const pool = (payload.db as unknown as { pool: { query: (query: string, values?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> } }).pool
+    const beforeInventory = await pool.query('SELECT COUNT(*)::int AS count FROM inventory_operations WHERE owner_id IN ($1, $2)', [author.userId, other.userId])
+    const folderResponse = await createFolder(jsonWrite(`${origin}/api/v1/library/folders`, { name: '我的文件夹' }, author.cookie))
+    expect(folderResponse.status).toBe(201)
+    const folderId = ((await folderResponse.json()) as { folder: { folderId: string } }).folder.folderId
+    const labelResponse = await createLabel(jsonWrite(`${origin}/api/v1/library/labels`, { name: '我的标签' }, author.cookie))
+    expect(labelResponse.status).toBe(201)
+    const labelId = ((await labelResponse.json()) as { label: { labelId: string } }).label.labelId
+
+    const metadata = await updateLibraryWork(jsonWrite(`${origin}/api/v1/library/works/${workId}`, {
+      folderId, labelIds: [labelId], makingStatus: 'making',
+    }, author.cookie, 'PATCH'), { params: Promise.resolve({ id: workId }) })
+    expect(metadata.status).toBe(200)
+
+    const authorLibrary = await listLibrary(new Request(`${origin}/api/v1/library`, { headers: { cookie: author.cookie, origin } }))
+    expect(authorLibrary.status).toBe(200)
+    await expect(authorLibrary.json()).resolves.toMatchObject({ works: [{ workId, makingStatus: 'making', folderId, labels: [{ labelId }] }] })
+    const otherLibrary = await listLibrary(new Request(`${origin}/api/v1/library`, { headers: { cookie: other.cookie, origin } }))
+    expect(otherLibrary.status).toBe(200)
+    await expect(otherLibrary.json()).resolves.toMatchObject({ works: [] })
+
+    const otherMetadata = await updateLibraryWork(jsonWrite(`${origin}/api/v1/library/works/${workId}`, {
+      folderId, labelIds: [labelId], makingStatus: 'completed',
+    }, other.cookie, 'PATCH'), { params: Promise.resolve({ id: workId }) })
+    expect(otherMetadata.status).toBe(404)
+    const otherFolderDelete = await deleteFolder(jsonWrite(`${origin}/api/v1/library/folders/${folderId}`, {}, other.cookie, 'DELETE'), { params: Promise.resolve({ id: folderId }) })
+    expect(otherFolderDelete.status).toBe(404)
+    const otherLabelDelete = await deleteLabel(jsonWrite(`${origin}/api/v1/library/labels/${labelId}`, {}, other.cookie, 'DELETE'), { params: Promise.resolve({ id: labelId }) })
+    expect(otherLabelDelete.status).toBe(404)
+
+    const postId = await publish(author, workId, '互动幂等作品')
+    const copied = await copyCommunity(jsonWrite(`${origin}/api/v1/community/${postId}/copy`, {}, other.cookie), { params: Promise.resolve({ id: postId }) })
+    expect(copied.status).toBe(201)
+
+    const likeKey = `m2-like-${randomUUID()}`
+    const firstLike = await interaction(postId, 'like', other, true, likeKey)
+    expect(firstLike.status).toBe(200)
+    const retryLike = await interaction(postId, 'like', other, true, likeKey)
+    expect(retryLike.status).toBe(200)
+    await expect(retryLike.json()).resolves.toMatchObject({ liked: true, likeCount: 1 })
+
+    const favoriteKey = `m2-favorite-${randomUUID()}`
+    expect((await interaction(postId, 'favorite', other, true, favoriteKey)).status).toBe(200)
+    const retryFavorite = await interaction(postId, 'favorite', other, true, favoriteKey)
+    expect(retryFavorite.status).toBe(200)
+    await expect(retryFavorite.json()).resolves.toMatchObject({ favorited: true, favoriteCount: 1 })
+
+    const unlikeKey = `m2-unlike-${randomUUID()}`
+    expect((await interaction(postId, 'like', other, false, unlikeKey)).status).toBe(200)
+    const retryUnlike = await interaction(postId, 'like', other, false, unlikeKey)
+    expect(retryUnlike.status).toBe(200)
+    await expect(retryUnlike.json()).resolves.toMatchObject({ liked: false, likeCount: 0 })
+
+    const unfavoriteKey = `m2-unfavorite-${randomUUID()}`
+    expect((await interaction(postId, 'favorite', other, false, unfavoriteKey)).status).toBe(200)
+    const afterInventory = await pool.query('SELECT COUNT(*)::int AS count FROM inventory_operations WHERE owner_id IN ($1, $2)', [author.userId, other.userId])
+    expect(afterInventory.rows[0]?.count).toBe(beforeInventory.rows[0]?.count)
+
+    const withdrawKey = `m2-withdraw-${randomUUID()}`
+    const withdrawn = await withdrawCommunity(jsonWrite(`${origin}/api/v1/community/${postId}/withdraw`, {}, author.cookie, 'POST', withdrawKey), { params: Promise.resolve({ id: postId }) })
+    expect(withdrawn.status).toBe(200)
+    const withdrawnRetry = await withdrawCommunity(jsonWrite(`${origin}/api/v1/community/${postId}/withdraw`, {}, author.cookie, 'POST', withdrawKey), { params: Promise.resolve({ id: postId }) })
+    expect(withdrawnRetry.status).toBe(200)
+    const withdrawnPublic = await getCommunity(new Request(`${origin}/api/v1/community/${postId}`), { params: Promise.resolve({ id: postId }) })
+    expect(withdrawnPublic.status).toBe(404)
   })
 })
