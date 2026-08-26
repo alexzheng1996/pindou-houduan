@@ -22,4 +22,13 @@
 - `POST /api/v1/community/:postId/report`：理由为 `copyright`、`adult_violence`、`harassment`、`spam` 或 `privacy`；举报人只在受控表和审计中保存。
 - `GET /api/v1/community/media/:mediaId`：仅允许 published 帖子的独立社区媒体；当前本地发布接口只冻结 media 元数据，未配置对象存储时返回 `COMMUNITY_MEDIA_NOT_FOUND`，不会退回私有 WorkAsset。
 
+## 社区资料（待 M2 Spec 批准后实现）
+
+- `GET /api/v1/me/community-profile`：认证用户读取自己的社区资料和全部社交链接，包含每条 `visibility: public|hidden`。
+- `PATCH /api/v1/me/community-profile`：认证用户维护自己的公开展示资料和社交链接。每条链接使用 `{ platform, url, visibility }`；第一版允许 `instagram|tiktok|youtube|pinterest|facebook|x|reddit|linkedin`，每平台最多一条，HTTPS 且必须匹配平台允许域名；默认 `hidden`。
+- `GET /api/v1/community/creators/:creatorId`：匿名只读作者资料安全投影，只返回公开展示资料和 `visibility=public` 的社交链接；不返回隐藏链接、邮箱、内部用户 ID、私密 Work 或运营备注。
+- 社交链接不能是短链、跳转链接、嵌入代码或含凭据的 URL；公开链接在前端以 `rel="ugc nofollow noopener noreferrer"` 打开，不写入 JSON-LD `sameAs`、sitemap 或分享图。
+
+后台的 M2.2 接口对社区域采用完整读取：`GET /api/v1/admin/community/users/:id` 返回该用户填写的全部社交链接（原始链接与每条 `visibility`，`hidden` 必须显示为“隐藏”）及完整社区档案入口；`GET /api/v1/admin/community/users/:id/posts` 默认可分页读取该用户所有状态的社区帖子；`GET /api/v1/admin/community/posts/:id` 可读取完整冻结发布内容、仍保留的社区媒体和治理历史。该边界不扩大到未发布私密作品/原图、邮箱、密码、会话、Token、对象存储键、订单、支付或地址。
+
 所有认证写接口沿用 trusted Origin、活动会话、`Idempotency-Key`、事务、审计、限流和 request ID。社区浏览、发布、互动、复制、图纸册整理、删除和恢复均不写个人豆仓；库存扣减仍只经既有 `POST /api/v1/works/:id/complete`。

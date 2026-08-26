@@ -47,6 +47,10 @@
 - `docs/specs/02d-M1-真实邮件适配器准备-spec.md`：官方 Resend 适配器的本地安全替身、team-test 启用条件与不做项。
 - `docs/specs/02e-M1.1-个人豆仓与制作扣减-spec.md`：个人豆仓账本、事务、图纸扣减、导入、色号治理、联调顺序和验收。
 - `docs/specs/02f-M1-team-test-私有R2与发布调度-spec.md`：team-test 前置的私有 R2 存储、受控迁移发布、清理调度、成本与验收门禁；待业务方审阅。
+- `docs/specs/03-M2-社区MVP-spec.md`：用户发布即公开的社区发布、互动、复制、举报与撤回范围；运营治理另见 M2.2。
+- `docs/specs/03a-M2.1-官方内容中心与SEO-GEO-spec.md`：官方 Guides/Blog、人工审核、SEO/GEO、分享、品牌视频和仅草稿的 Codex/MCP 边界；待用户审阅。
+- `docs/specs/03b-M2.2-社区治理后台-spec.md`：运营查看用户内容、精选、下架、举报、用户备注、特别关注和审计；待用户审阅。
+- `docs/M2.1-内容中心与社区治理-SEO-GEO-讨论基线.md`：上述两份 Spec 的已确认业务决策和讨论依据。
 - `docs/specs/01-M0-基础架构与M1接口冻结-spec.md`：M0-A / M0-B 的实施范围与验收。
 - `docs/接口/M1-作品数据契约.md`：单图图纸和画板云端作品的 v1 字段、文件与兼容边界。
 - `docs/验收/M1-PixoMosaic-只读契约核对-2026-08-22.md`：当前前端数据与 v1 的映射、差异和首次联调清单；不包含前端改动。
