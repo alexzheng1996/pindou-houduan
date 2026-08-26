@@ -206,6 +206,20 @@ export const betterAuthOptions = {
         input: false,
         returned: false,
       },
+      // Inventory thresholds persist with the account and are only exposed
+      // through the authenticated inventory API.
+      inventoryOutOfStockThreshold: {
+        type: 'number',
+        defaultValue: 50,
+        input: false,
+        returned: false,
+      },
+      inventoryWarningThreshold: {
+        type: 'number',
+        defaultValue: 100,
+        input: false,
+        returned: false,
+      },
     },
     validateUserInfo: ({ user, source }) => {
       if (source.action !== 'create-user') {

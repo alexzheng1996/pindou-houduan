@@ -10,6 +10,7 @@ import { POST as adjustInventoryPost } from '@/app/api/v1/inventory/adjustments/
 import { DELETE as deleteInventoryOperation } from '@/app/api/v1/inventory/operations/[id]/route'
 import { GET as getInventoryOperations } from '@/app/api/v1/inventory/operations/route'
 import { GET as getInventory } from '@/app/api/v1/inventory/route'
+import { GET as getInventorySettings, PUT as updateInventorySettings } from '@/app/api/v1/inventory/settings/route'
 import { POST as completeWorkPost } from '@/app/api/v1/works/[id]/complete/route'
 import { GET as inventoryStatusGet } from '@/app/api/v1/works/[id]/inventory-status/route'
 import { POST as createWorkPost } from '@/app/api/v1/works/route'
@@ -127,9 +128,12 @@ describe('M1.1 个人豆仓账本与制作扣减', () => {
     await payload?.destroy()
   })
 
-  it('按 owner + 规格 + HEX 隔离余额，并正确给出 49/50/100 健康度', async () => {
+  it('新账号默认规则为 50/100，按 owner + 规格 + HEX 隔离余额', async () => {
     const first = await signInVerifiedUser()
     const second = await signInVerifiedUser()
+    const firstSettings = await getInventorySettings(jsonRequest('/api/v1/inventory/settings', 'GET', first.cookie))
+    expect(firstSettings.status).toBe(200)
+    await expect(firstSettings.json()).resolves.toMatchObject({ rules: { outOfStockThreshold: 50, warningThreshold: 100 } })
     const firstAdjustment = await adjustInventoryPost(jsonRequest('/api/v1/inventory/adjustments', 'POST', first.cookie, {
       kind: 'receipt',
       beadSizeMm: 2.6,
@@ -154,6 +158,61 @@ describe('M1.1 个人豆仓账本与制作扣减', () => {
     const secondInventory = await getInventory(jsonRequest('/api/v1/inventory', 'GET', second.cookie))
     expect(secondInventory.status).toBe(200)
     await expect(secondInventory.json()).resolves.toMatchObject({ items: [] })
+  })
+
+  it('账号规则独立保存，并同步决定余额与作品状态的健康度', async () => {
+    const first = await signInVerifiedUser()
+    const second = await signInVerifiedUser()
+    const workId = await createActivePattern(first.cookie)
+    const adjustment = await adjustInventoryPost(jsonRequest('/api/v1/inventory/adjustments', 'POST', first.cookie, {
+      kind: 'receipt', beadSizeMm: 2.6, lines: [{ colorHex: '#123456', quantity: 20 }, { colorHex: '#ABCDEF', quantity: 60 }],
+    }, `seed-rules-${randomUUID()}`))
+    expect(adjustment.status).toBe(200)
+
+    const updated = await updateInventorySettings(jsonRequest('/api/v1/inventory/settings', 'PUT', first.cookie, {
+      outOfStockThreshold: 20, warningThreshold: 60,
+    }, `rules-${randomUUID()}`))
+    expect(updated.status, await updated.clone().text()).toBe(200)
+    await expect(updated.json()).resolves.toMatchObject({ rules: { outOfStockThreshold: 20, warningThreshold: 60 } })
+
+    const inventory = await getInventory(jsonRequest('/api/v1/inventory', 'GET', first.cookie))
+    expect(inventory.status).toBe(200)
+    const inventoryBody = await inventory.json() as { rules: { outOfStockThreshold: number; warningThreshold: number }; items: Array<{ colorHex: string; health: string }> }
+    expect(inventoryBody.rules).toEqual({ outOfStockThreshold: 20, warningThreshold: 60 })
+    expect(inventoryBody.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ colorHex: '#123456', health: 'warning' }),
+      expect.objectContaining({ colorHex: '#ABCDEF', health: 'normal' }),
+    ]))
+
+    const status = await inventoryStatusGet(jsonRequest(`/api/v1/works/${workId}/inventory-status`, 'GET', first.cookie), { params: Promise.resolve({ id: workId }) })
+    expect(status.status).toBe(200)
+    const statusBody = await status.json() as { rules: { outOfStockThreshold: number; warningThreshold: number }; colors: Array<{ colorHex: string; health: string }> }
+    expect(statusBody.rules).toEqual(inventoryBody.rules)
+    expect(statusBody.colors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ colorHex: '#123456', health: 'warning' }),
+      expect.objectContaining({ colorHex: '#ABCDEF', health: 'normal' }),
+    ]))
+
+    const secondSettings = await getInventorySettings(jsonRequest('/api/v1/inventory/settings', 'GET', second.cookie))
+    expect(secondSettings.status).toBe(200)
+    await expect(secondSettings.json()).resolves.toMatchObject({ rules: { outOfStockThreshold: 50, warningThreshold: 100 } })
+  })
+
+  it('拒绝无效的库存规则，且重复保存同一幂等键不会产生额外写入', async () => {
+    const user = await signInVerifiedUser()
+    const key = `rules-${randomUUID()}`
+    const input = { outOfStockThreshold: 12, warningThreshold: 34 }
+    const first = await updateInventorySettings(jsonRequest('/api/v1/inventory/settings', 'PUT', user.cookie, input, key))
+    expect(first.status).toBe(200)
+    const retry = await updateInventorySettings(jsonRequest('/api/v1/inventory/settings', 'PUT', user.cookie, input, key))
+    expect(retry.status).toBe(200)
+    await expect(retry.json()).resolves.toMatchObject({ rules: input })
+
+    const invalid = await updateInventorySettings(jsonRequest('/api/v1/inventory/settings', 'PUT', user.cookie, {
+      outOfStockThreshold: 34, warningThreshold: 34,
+    }, `invalid-rules-${randomUUID()}`))
+    expect(invalid.status).toBe(422)
+    await expect(invalid.json()).resolves.toMatchObject({ error: { code: 'INVENTORY_INPUT_INVALID' } })
   })
 
   it('库存列表支持稳定分页和 HEX 查询，不遗漏 100 条以后的余额', async () => {

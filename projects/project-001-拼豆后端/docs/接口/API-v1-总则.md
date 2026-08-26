@@ -64,11 +64,13 @@
 
 | 方法与路径 | 用途 | 请求关键字段 | 成功响应关键字段 | 可处理错误码 |
 | --- | --- | --- | --- | --- |
-| `GET /api/v1/inventory` | 读取自己的库存余额 | `beadSizeMm`、`query`、`health`、分页 | 余额、规格、HEX、版本、健康度 | `AUTH_REQUIRED` |
+| `GET /api/v1/inventory` | 读取自己的库存余额 | `beadSizeMm`、`query`、`health`、分页 | 余额、规格、HEX、版本、服务端健康度和只读 `rules` | `AUTH_REQUIRED` |
+| `GET /api/v1/inventory/settings` | 读取当前账号的库存规则 | 无 | `rules.outOfStockThreshold`、`rules.warningThreshold` | `AUTH_REQUIRED` |
+| `PUT /api/v1/inventory/settings` | 保存当前账号的库存规则 | 两个非负整数阈值、`Idempotency-Key` | 保存后的只读 `rules` | `INVENTORY_INPUT_INVALID` |
 | `POST /api/v1/inventory/adjustments` | 入库、手动扣减或盘点 | `kind`、规格、颜色、数量或 `targetQuantity`、`expectedRevision` | 操作、余额和明细投影 | `INVENTORY_REVISION_CONFLICT`、`INVENTORY_INPUT_INVALID` |
 | `GET /api/v1/inventory/operations` | 读取自己的库存操作历史 | 分页 | 操作头与明细安全投影 | `AUTH_REQUIRED` |
 | `DELETE /api/v1/inventory/operations/:id` | 软删原操作并生成唯一反向回滚 | 可选删除原因 | 原操作状态、回滚操作和余额 | `INVENTORY_OPERATION_NOT_FOUND`、`INVENTORY_OPERATION_NOT_REVERSIBLE` |
-| `GET /api/v1/works/:id/inventory-status` | 按服务端作品快照读取库存状态 | 无 | 每色需求、库存、缺口、健康度和汇总 | `WORK_BEAD_SIZE_REQUIRED`、`WORK_NOT_FOUND` |
+| `GET /api/v1/works/:id/inventory-status` | 按服务端作品快照读取库存状态 | 无 | 每色需求、库存、缺口、服务端健康度、汇总和只读 `rules` | `WORK_BEAD_SIZE_REQUIRED`、`WORK_NOT_FOUND` |
 | `POST /api/v1/works/:id/complete` | 确认完成一份作品并原子扣减 | 可选备注 | 制作操作和扣减结果 | `WORK_BEAD_SIZE_REQUIRED`、`WORK_NOT_FOUND` |
 | `GET /api/v1/inventory/template` | 下载 CSV 模板 | 无 | CSV 文件 | `AUTH_REQUIRED` |
 | `POST /api/v1/inventory/imports/preview` | 服务端预检 CSV | 规格、色号系统、策略、文件 | 冻结预览、行级问题和过期时间 | `INVENTORY_IMPORT_INVALID` |
@@ -76,6 +78,8 @@
 | `GET /api/v1/works/:id/inventory-shortages` | 导出当前作品缺货清单 | 显示色号系统 | CSV 或安全 JSON 投影 | `WORK_BEAD_SIZE_REQUIRED`、`WORK_NOT_FOUND` |
 
 实现前不承诺 Excel/XLSX 导入；第一版只支持 CSV。美国品牌色号映射也必须在品牌、版本和可追溯来源确认后，才增加到预检可选项。
+
+库存数量是数据库事实；`negative / out_of_stock / warning / normal` 均由后端读取账号规则后实时推导，不写入余额或账本。默认阈值为缺货 `<50`、预警 `50–99`、正常 `>=100`；账号可修改为任意非负缺货阈值与严格更高的预警阈值。数量 `<0` 始终为负库存，优先于阈值；负库存只是风险提示，不阻止生成、编辑、保存、导出或用户确认后的“完成制作并扣减”。
 
 一次首次保存的完整时序、资产角色与失败清理规则以 `M1-作品数据契约.md` 第 9 节为准。业务 API 不调用 Payload 默认 REST 或 GraphQL 路由。
 
@@ -90,7 +94,7 @@
 - 已实现：`board.layers[].sourceAssetId` 只允许引用本用户、当前作品且 `ready` 的 `original` 资产；`thumbnailAssetId` 只允许同一边界的 `thumbnail` 或 `display` 资产。跨用户、跨作品、未确认、错误角色或不存在的引用统一返回 `ASSET_NOT_READY`，且不会激活 draft 或留下新快照。
 - 已实现：认证继续复用 Better Auth 的数据库限流与单账号失败锁定；业务 API 新增按活动用户的原子 PostgreSQL 桶，在解析 JSON/二进制前限制作品写入、上传 intent/PUT/confirm 与私有下载，命中时返回 `429 RATE_LIMITED` 和 `Retry-After`。关键认证、作品和私有文件动作写入最小审计事件，且不记录邮箱、Token、文件内容、存储键、IP 或完整 URL；完整初始阈值和保留期见 `../specs/02b-M1-审计与反滥用-spec.md`。
 - 已实现：Google 的本机 OIDC Mock 验证授权码、PKCE、state、nonce、ID Token 签名、issuer、audience、`email_verified` 和显式账号绑定。默认运行时关闭 Google provider；不保存真实凭据，不配置真实 callback。细则见 `../specs/02c-M1-Google本地OIDC-Mock-spec.md`。
-- 已实现：M1.1 个人豆仓余额、手工调整、操作历史/删除回滚、服务端作品库存状态和完成制作扣减；CSV 模板、UTF-8 CSV 服务端预检/10 分钟冻结确认导入、以及缺货 CSV 导出。预检拒绝未知、歧义、重复色号与非法数量；确认会复核预览哈希和受影响余额 revision，防止覆盖另一设备的新库存。Excel/XLSX 与美国品牌色表仍未实现。
+- 已实现：M1.1 个人豆仓余额、账号级库存规则、手工调整、操作历史/删除回滚、服务端作品库存状态和完成制作扣减；CSV 模板、UTF-8 CSV 服务端预检/10 分钟冻结确认导入、以及缺货 CSV 导出。阈值只影响读取时健康度，不改余额或账本；预检拒绝未知、歧义、重复色号与非法数量；确认会复核预览哈希和受影响余额 revision，防止覆盖另一设备的新库存。Excel/XLSX 与美国品牌色表仍未实现。
 - 未实现：`pattern` 的资产引用字段尚未在冻结契约中定义，当前保持拒绝；真实前端联调。
 
 ## 6. 版本与兼容

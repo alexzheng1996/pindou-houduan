@@ -167,6 +167,8 @@ export interface User {
   termsAcceptedAt?: string | null;
   loginFailureCount?: number | null;
   loginLockedUntil?: string | null;
+  inventoryOutOfStockThreshold?: number | null;
+  inventoryWarningThreshold?: number | null;
   /**
    * The role/ roles of the user
    */
@@ -541,6 +543,8 @@ export interface UsersSelect<T extends boolean = true> {
   termsAcceptedAt?: T;
   loginFailureCount?: T;
   loginLockedUntil?: T;
+  inventoryOutOfStockThreshold?: T;
+  inventoryWarningThreshold?: T;
   role?: T;
   account?: T;
   session?: T;

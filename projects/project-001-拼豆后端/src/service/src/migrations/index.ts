@@ -11,6 +11,7 @@ import * as migration_20260822_141000_m11_inventory_ledger from './20260822_1410
 import * as migration_20260822_201000_m11_inventory_import_previews from './20260822_201000_m11_inventory_import_previews';
 import * as migration_20260825_120000_m2_library_community from './20260825_120000_m2_library_community';
 import * as migration_20260825_160000_m2_work_withdraw_transition_fix from './20260825_160000_m2_work_withdraw_transition_fix';
+import * as migration_20260826_103000_m11_inventory_rules from './20260826_103000_m11_inventory_rules';
 
 export const migrations = [
   {
@@ -77,5 +78,10 @@ export const migrations = [
     up: migration_20260825_160000_m2_work_withdraw_transition_fix.up,
     down: migration_20260825_160000_m2_work_withdraw_transition_fix.down,
     name: '20260825_160000_m2_work_withdraw_transition_fix'
+  },
+  {
+    up: migration_20260826_103000_m11_inventory_rules.up,
+    down: migration_20260826_103000_m11_inventory_rules.down,
+    name: '20260826_103000_m11_inventory_rules'
   },
 ];

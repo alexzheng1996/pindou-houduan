@@ -28,9 +28,14 @@ const maxAdjustmentLines = 200
 const maxImportLines = 200
 const importPreviewLifetimeMilliseconds = 10 * 60 * 1000
 const colorMappingSha256 = '32dad53ae0a650730df91480f5304691ce0c4661c4f49056f1d7261a22e5456d'
+const defaultInventoryRules: InventoryRules = { outOfStockThreshold: 50, warningThreshold: 100 }
 
 export type BeadSizeMm = 2.6 | 5
-type Health = 'normal' | 'out_of_stock' | 'warning'
+type Health = 'negative' | 'normal' | 'out_of_stock' | 'warning'
+export type InventoryRules = {
+  outOfStockThreshold: number
+  warningThreshold: number
+}
 type OperationKind =
   | 'import_append'
   | 'import_overwrite'
@@ -212,6 +217,23 @@ const validateBoundedInteger = (value: unknown): number => {
   return integer
 }
 
+const validateInventoryRules = (value: unknown): InventoryRules => {
+  if (!isRecord(value) || Object.keys(value).length !== 2) {
+    throw new BusinessApiError('INVENTORY_INPUT_INVALID', '库存规则格式无效。', 422)
+  }
+  const outOfStockThreshold = asInteger(value.outOfStockThreshold)
+  const warningThreshold = asInteger(value.warningThreshold)
+  if (
+    outOfStockThreshold === null || warningThreshold === null ||
+    outOfStockThreshold < 0 || outOfStockThreshold > maxQuantity ||
+    warningThreshold < 1 || warningThreshold > maxQuantity ||
+    warningThreshold <= outOfStockThreshold
+  ) {
+    throw new BusinessApiError('INVENTORY_INPUT_INVALID', '预警阈值必须是大于缺货阈值的安全范围整数。', 422)
+  }
+  return { outOfStockThreshold, warningThreshold }
+}
+
 const validateExpectedRevision = (value: unknown): number | null => {
   if (value === undefined || value === null) {
     return null
@@ -260,8 +282,33 @@ const lockOwnerInventory = async (context: ActiveSessionContext): Promise<Transa
   return db
 }
 
-const toHealth = (quantity: number): Health =>
-  quantity < 50 ? 'out_of_stock' : quantity < 100 ? 'warning' : 'normal'
+const toHealth = (quantity: number, rules: InventoryRules): Health =>
+  quantity < 0
+    ? 'negative'
+    : quantity < rules.outOfStockThreshold
+      ? 'out_of_stock'
+      : quantity < rules.warningThreshold
+        ? 'warning'
+        : 'normal'
+
+const getInventoryRules = async (context: ActiveSessionContext): Promise<InventoryRules> => {
+  const db = await getTransactionDatabase(context)
+  const result = await db.execute(sql`
+    SELECT inventory_out_of_stock_threshold, inventory_warning_threshold
+    FROM users
+    WHERE id = ${context.user.id}`)
+  const row = result.rows[0]
+  if (!row) {
+    throw new BusinessApiError('ACCOUNT_UNAVAILABLE', '当前账号不能访问私密资源。', 403)
+  }
+  if (row.inventory_out_of_stock_threshold === null || row.inventory_warning_threshold === null) {
+    return { ...defaultInventoryRules }
+  }
+  return validateInventoryRules({
+    outOfStockThreshold: parseDbInteger(row.inventory_out_of_stock_threshold),
+    warningThreshold: parseDbInteger(row.inventory_warning_threshold),
+  })
+}
 
 const asInventoryItem = (row: DatabaseRow): InventoryItemRow => ({
   id: parseDbInteger(row.id),
@@ -1096,6 +1143,7 @@ export const getWorkInventoryStatus = async (
 ): Promise<Record<string, unknown>> => {
   const source = await findWorkInventorySource(context, publicId)
   const db = await getTransactionDatabase(context)
+  const rules = await getInventoryRules(context)
   const colors = source.usage.map((line) => line.colorHex)
   const rows = colors.length === 0 ? { rows: [] } : await db.execute(sql`
     SELECT id, public_id, bead_size_mm, color_hex, quantity, revision, updated_at
@@ -1115,7 +1163,7 @@ export const getWorkInventoryStatus = async (
       requiredQuantity: line.requiredQuantity,
       availableQuantity,
       projectedQuantity,
-      health: availableQuantity === null ? 'not_recorded' : toHealth(availableQuantity),
+      health: availableQuantity === null ? 'not_recorded' : toHealth(availableQuantity, rules),
       producible: availableQuantity !== null && availableQuantity >= line.requiredQuantity,
       shortageQuantity: availableQuantity === null ? null : Math.max(0, line.requiredQuantity - availableQuantity),
       ...(item ? { itemId: item.publicId, revision: item.revision } : {}),
@@ -1135,11 +1183,9 @@ export const getWorkInventoryStatus = async (
       insufficientColorCount: colorsStatus.filter((item) => item.producible === false).length,
       unrecordedColorCount: colorsStatus.filter((item) => item.health === 'not_recorded').length,
     },
+    rules,
   }
 }
-
-const inventoryHealth = (quantity: number): 'negative' | Health =>
-  quantity < 0 ? 'negative' : toHealth(quantity)
 
 const csvCell = (value: string | number): string => {
   const raw = String(value)
@@ -1156,7 +1202,7 @@ export const getWorkInventoryShortageCsv = async (
     colors: Array<{
       availableQuantity: number | null
       colorHex: string
-      health: 'normal' | 'not_recorded' | 'out_of_stock' | 'warning'
+      health: 'negative' | 'normal' | 'not_recorded' | 'out_of_stock' | 'warning'
       producible: boolean
       requiredQuantity: number
       shortageQuantity: number | null
@@ -1178,7 +1224,7 @@ export const getWorkInventoryShortageCsv = async (
       line.availableQuantity,
       line.requiredQuantity,
       shortage,
-      inventoryHealth(line.availableQuantity),
+      line.health,
       line.producible ? '本图可完成' : '库存不足',
     ]
   })
@@ -1190,6 +1236,7 @@ export const listInventoryItems = async (
   context: ActiveSessionContext,
   searchParams: URLSearchParams,
 ): Promise<Record<string, unknown>> => {
+  const rules = await getInventoryRules(context)
   const rawBeadSizeMm = searchParams.get('beadSizeMm')
   const beadSizeMm = rawBeadSizeMm === null ? null : validateBeadSizeMm(Number(rawBeadSizeMm))
   const health = searchParams.get('health')
@@ -1234,9 +1281,18 @@ export const listInventoryItems = async (
     parameters.push(beadSizeMm)
     conditions.push(`bead_size_mm = $${parameters.length}`)
   }
-  if (health === 'normal') conditions.push('quantity >= 100')
-  if (health === 'warning') conditions.push('quantity >= 50 AND quantity < 100')
-  if (health === 'out_of_stock') conditions.push('quantity >= 0 AND quantity < 50')
+  if (health === 'normal') {
+    parameters.push(rules.warningThreshold)
+    conditions.push(`quantity >= $${parameters.length}`)
+  }
+  if (health === 'warning') {
+    parameters.push(rules.outOfStockThreshold, rules.warningThreshold)
+    conditions.push(`quantity >= $${parameters.length - 1} AND quantity < $${parameters.length}`)
+  }
+  if (health === 'out_of_stock') {
+    parameters.push(rules.outOfStockThreshold)
+    conditions.push(`quantity >= 0 AND quantity < $${parameters.length}`)
+  }
   if (health === 'negative') conditions.push('quantity < 0')
   if (query !== null) {
     parameters.push(`%${query.replace(/[\\%_]/g, '\\$&')}%`)
@@ -1263,12 +1319,65 @@ export const listInventoryItems = async (
     colorHex: item.colorHex,
     quantity: item.quantity,
     revision: item.revision,
-    health: item.quantity < 0 ? 'negative' : toHealth(item.quantity),
+    health: toHealth(item.quantity, rules),
     updatedAt: item.updatedAt,
   }))
   const hasNextPage = items.length > limit
   const page = items.slice(0, limit)
-  return { items: page, nextCursor: hasNextPage ? page.at(-1)?.itemId ?? null : null }
+  return { items: page, nextCursor: hasNextPage ? page.at(-1)?.itemId ?? null : null, rules }
+}
+
+const settingsResponse = (rules: InventoryRules): { rules: InventoryRules } => ({ rules })
+
+const parseStoredSettingsResponse = (value: unknown): { rules: InventoryRules } | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+  try {
+    return settingsResponse(validateInventoryRules(value.rules))
+  } catch {
+    return null
+  }
+}
+
+export const getInventorySettings = async (
+  context: ActiveSessionContext,
+): Promise<{ rules: InventoryRules }> => settingsResponse(await getInventoryRules(context))
+
+export const updateInventorySettings = async (
+  context: ActiveSessionContext,
+  rawInput: unknown,
+  keySha256: string,
+): Promise<{ rules: InventoryRules }> => {
+  const rules = validateInventoryRules(rawInput)
+  const route = 'PUT /api/v1/inventory/settings'
+  return withIdempotentWrite(context, {
+    route,
+    keySha256,
+    requestSha256: sha256(stableStringify(rules)),
+    responseStatus: 200,
+    parseStoredResponse: parseStoredSettingsResponse,
+    execute: async () => {
+      const db = await lockOwnerInventory(context)
+      const result = await db.execute(sql`
+        UPDATE users
+        SET inventory_out_of_stock_threshold = ${rules.outOfStockThreshold},
+            inventory_warning_threshold = ${rules.warningThreshold},
+            updated_at = NOW()
+        WHERE id = ${context.user.id}
+        RETURNING id`)
+      if (!result.rows[0]) {
+        throw new BusinessApiError('ACCOUNT_UNAVAILABLE', '当前账号不能访问私密资源。', 403)
+      }
+      await recordAuthenticatedAuditEvent(context, {
+        action: 'inventory.settings_updated',
+        outcome: 'allowed',
+        resourceType: 'inventory_settings',
+        route,
+      })
+      return settingsResponse(rules)
+    },
+  }) as Promise<{ rules: InventoryRules }>
 }
 
 export const listInventoryOperations = async (

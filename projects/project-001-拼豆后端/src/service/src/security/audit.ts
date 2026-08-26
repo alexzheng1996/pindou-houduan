@@ -32,6 +32,7 @@ export type SecurityAuditAction =
   | 'inventory.import_committed'
   | 'inventory.import_previewed'
   | 'inventory.operation_reversed'
+  | 'inventory.settings_updated'
   | 'inventory.work_completed'
   | 'work.created'
   | 'work.deletion_requested'
@@ -53,7 +54,7 @@ export type SecurityAuditInput = {
   reasonCode?: string
   requestId: string
   resourcePublicId?: string
-  resourceType?: 'asset' | 'inventory_import' | 'inventory_operation' | 'work' | 'library' | 'community'
+  resourceType?: 'asset' | 'inventory_import' | 'inventory_operation' | 'inventory_settings' | 'work' | 'library' | 'community'
   route: string
 }
 
