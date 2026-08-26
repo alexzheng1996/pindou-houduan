@@ -4,22 +4,32 @@ import { BETTER_AUTH_CONTEXT_KEY } from 'payload-auth/better-auth/adapter'
 export const userRoles = ['user', 'staff', 'admin'] as const
 export const accountStatuses = ['pending_verification', 'active', 'suspended'] as const
 
-type UserRole = (typeof userRoles)[number]
-
 type BetterAuthRequest = PayloadRequest & {
   context?: Record<string, unknown>
-  user?: { role?: UserRole | UserRole[] | string | null } | null
+  user?: { role?: string | string[] | null } | null
 }
 
-const hasRole = (user: BetterAuthRequest['user'], role: UserRole): boolean => {
-  if (Array.isArray(user?.role)) {
-    return user.role.includes(role)
+export const hasRole = (user: BetterAuthRequest['user'], role: (typeof userRoles)[number]): boolean => {
+  const userRole: unknown = user?.role
+
+  if (Array.isArray(userRole)) {
+    return userRole.includes(role)
   }
 
-  return typeof user?.role === 'string' && user.role === role
+  if (typeof userRole === 'string') {
+    return userRole.split(',').map((item: string) => item.trim()).includes(role)
+  }
+
+  return false
 }
 
-const isAdmin = ({ req }: { req: BetterAuthRequest }) => hasRole(req.user, 'admin')
+export const isAdmin = ({ req }: { req: BetterAuthRequest }) => hasRole(req.user, 'admin')
+
+// Payload has one global Admin entry gate. Staff may enter it only because M2.1
+// exposes a tightly scoped content collection; individual collection access
+// remains the authority for what they can actually view or edit.
+export const isStaffOrAdmin = ({ req }: { req: BetterAuthRequest }) =>
+  hasRole(req.user, 'staff') || hasRole(req.user, 'admin')
 
 const isBetterAuthInternalRequest = (req: BetterAuthRequest): boolean =>
   Boolean(req.context?.[BETTER_AUTH_CONTEXT_KEY])
@@ -36,7 +46,7 @@ export const Users: CollectionConfig = {
     // The raw Payload Users REST surface is an internal management surface.
     // Better Auth's Payload adapter carries its own trusted context marker;
     // PixoMosaic users will use the versioned /api/v1 contract instead.
-    admin: isAdmin,
+    admin: isStaffOrAdmin,
     create: allowBetterAuthOrAdmin,
     read: allowBetterAuthOrAdmin,
     update: allowBetterAuthOrAdmin,

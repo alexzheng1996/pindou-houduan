@@ -77,6 +77,8 @@ export interface Config {
     'work-documents': WorkDocument;
     'work-assets': WorkAsset;
     'api-idempotency-records': ApiIdempotencyRecord;
+    articles: Article;
+    'article-media': ArticleMedia;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -99,6 +101,8 @@ export interface Config {
     'work-documents': WorkDocumentsSelect<false> | WorkDocumentsSelect<true>;
     'work-assets': WorkAssetsSelect<false> | WorkAssetsSelect<true>;
     'api-idempotency-records': ApiIdempotencyRecordsSelect<false> | ApiIdempotencyRecordsSelect<true>;
+    articles: ArticlesSelect<false> | ArticlesSelect<true>;
+    'article-media': ArticleMediaSelect<false> | ArticleMediaSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -186,8 +190,6 @@ export interface User {
   collection: 'users';
 }
 /**
- * Accounts are used to store user accounts for authentication providers
- *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "accounts".
  */
@@ -238,8 +240,6 @@ export interface Account {
   updatedAt: string;
 }
 /**
- * Sessions are active sessions for users. They are used to authenticate users with a session token
- *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "sessions".
  */
@@ -269,8 +269,6 @@ export interface Session {
   user: number | User;
 }
 /**
- * Verifications are used to verify authentication requests
- *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "verifications".
  */
@@ -423,6 +421,76 @@ export interface ApiIdempotencyRecord {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "articles".
+ */
+export interface Article {
+  id: number;
+  publicId: string;
+  section: 'guides' | 'blog';
+  slug: string;
+  title: string;
+  excerpt: string;
+  body: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  };
+  articleType: 'tool_guide' | 'faq' | 'creative' | 'product_tutorial' | 'case_study' | 'announcement';
+  authorType: 'staff' | 'codex_assisted';
+  authorDisplayName: string;
+  sourceList?:
+    | {
+        label: string;
+        url: string;
+        id?: string | null;
+      }[]
+    | null;
+  contentQuality: {
+    topicIntent?: string | null;
+    factCheckStatus: 'not_started' | 'needs_review' | 'checked';
+    editorNotes?: string | null;
+  };
+  seoSuggestions?: {
+    seoTitle?: string | null;
+    metaDescription?: string | null;
+    primaryTopic?: string | null;
+    twitterCard?: ('summary' | 'summary_large_image') | null;
+  };
+  status: 'draft';
+  version: number;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "article-media".
+ */
+export interface ArticleMedia {
+  id: number;
+  publicId: string;
+  article?: (number | null) | Article;
+  uploader: number | User;
+  status: 'upload_pending' | 'ready' | 'validation_failed' | 'orphaned' | 'deleted';
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  storageKey: string;
+  altText: string;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv".
  */
 export interface PayloadKv {
@@ -484,6 +552,14 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'api-idempotency-records';
         value: number | ApiIdempotencyRecord;
+      } | null)
+    | ({
+        relationTo: 'articles';
+        value: number | Article;
+      } | null)
+    | ({
+        relationTo: 'article-media';
+        value: number | ArticleMedia;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -689,6 +765,64 @@ export interface ApiIdempotencyRecordsSelect<T extends boolean = true> {
   responseStatus?: T;
   responseBody?: T;
   expiresAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "articles_select".
+ */
+export interface ArticlesSelect<T extends boolean = true> {
+  publicId?: T;
+  section?: T;
+  slug?: T;
+  title?: T;
+  excerpt?: T;
+  body?: T;
+  articleType?: T;
+  authorType?: T;
+  authorDisplayName?: T;
+  sourceList?:
+    | T
+    | {
+        label?: T;
+        url?: T;
+        id?: T;
+      };
+  contentQuality?:
+    | T
+    | {
+        topicIntent?: T;
+        factCheckStatus?: T;
+        editorNotes?: T;
+      };
+  seoSuggestions?:
+    | T
+    | {
+        seoTitle?: T;
+        metaDescription?: T;
+        primaryTopic?: T;
+        twitterCard?: T;
+      };
+  status?: T;
+  version?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "article-media_select".
+ */
+export interface ArticleMediaSelect<T extends boolean = true> {
+  publicId?: T;
+  article?: T;
+  uploader?: T;
+  status?: T;
+  mimeType?: T;
+  sizeBytes?: T;
+  sha256?: T;
+  storageKey?: T;
+  altText?: T;
   updatedAt?: T;
   createdAt?: T;
 }

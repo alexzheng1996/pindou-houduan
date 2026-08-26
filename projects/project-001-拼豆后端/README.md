@@ -26,6 +26,7 @@
 - M1 本地认证已完成邮箱密码注册、邀请/白名单判断、15 分钟一次性哈希 OTP 验证、登录、忘记/重设密码、连续 5 次错误密码锁定 15 分钟、停用账号拒绝登录、Cookie/CORS/CSRF 与显式迁移；密码重设令牌单次消费并撤销旧会话。本地邮件仅进入受控 outbox，不发送真实邮件。Google 本机 OIDC Mock 已验证授权码、PKCE、state、nonce、ID Token 签名、issuer、audience、`email_verified` 与显式账号绑定；它不等同于已配置真实 Google OAuth。私密的 Work / WorkDocument / WorkAsset 与持久化幂等模型已迁移并验证；`POST /api/v1/works` 可原子创建严格校验的 `pattern` 或无资产 `board` draft 与 revision 0 快照；`GET /api/v1/works` 和 `GET /api/v1/works/:id` 只读取本人 active 作品；`PATCH /api/v1/works/:id/document` 以数据库乐观锁更新快照、首次激活作品，并强制每用户最多 50 个 active 作品。`board` 已按 v1 校验图层/格点/坐标/叠放/材料清单，且其 `sourceAssetId` / `thumbnailAssetId` 必须为本人、当前作品、`ready` 且角色匹配的私有资产。M1 本地受控文件闭环也已完成：本人可申请 intent、PUT PNG/JPEG/WebP、confirm 并私有下载；真实字节、大小、哈希、作品/用户配额及 A/B 隔离均由服务端验证。作品删除闭环已加入：草稿取消立即隐藏，active 作品进入 30 天回收期，`pnpm cleanup:works` 按对象→资产→快照→作品顺序执行本机物理清理。审计与反滥用已完成本地最小闭环：认证继续使用 Better Auth 数据库限流/账号锁定；业务按活动用户限制作品写入、上传 intent/PUT/confirm 与私有下载，最小审计不保存邮件、文件内容、存储键、Token 或 IP 原文；`pnpm cleanup:security` 清理 90 天审计、2 天限流桶和已过期的幂等缓存。`pattern` 资产引用字段、真实邮件、真实 Google OAuth 和 team-test/生产联调仍未完成。
 - 主域名已确认是 `pixomosaic.com`；未创建云账号、对象存储桶、邮件账号、OAuth、`api-test.pixomosaic.com` DNS 记录或线上部署，也不需要 Cloudflare 凭据；本次已获业务方授权修改 PixoMosaic 前端独立仓库，其 Git 改动仍由前端仓库单独管理。
 - 完整验收证据和 M1 进入条件见 `docs/验收/阶段验收记录.md` 与 `handoff/M0-技术基础完成与M1-Go清单.md`。
+- M2.1-A 官方内容草稿后台已完成本机闭环：Staff/Admin 可在受控后台创建、读取和按版本更新 Guides/Blog 草稿；发布、公开文章、SEO/GEO、分享、视频、媒体上传、MCP 和社区治理均未实现，仍须按后续 Spec 分阶段验收。具体接口与边界见 `docs/接口/M2.1-内容中心与SEO-GEO-API.md` 及 `docs/验收/阶段验收记录.md`。
 
 ## 目录说明
 
@@ -48,7 +49,7 @@
 - `docs/specs/02e-M1.1-个人豆仓与制作扣减-spec.md`：个人豆仓账本、事务、图纸扣减、导入、色号治理、联调顺序和验收。
 - `docs/specs/02f-M1-team-test-私有R2与发布调度-spec.md`：team-test 前置的私有 R2 存储、受控迁移发布、清理调度、成本与验收门禁；待业务方审阅。
 - `docs/specs/03-M2-社区MVP-spec.md`：用户发布即公开的社区发布、互动、复制、举报与撤回范围；运营治理另见 M2.2。
-- `docs/specs/03a-M2.1-官方内容中心与SEO-GEO-spec.md`：官方 Guides/Blog、人工审核、SEO/GEO、分享、品牌视频和仅草稿的 Codex/MCP 边界；待用户审阅。
+- `docs/specs/03a-M2.1-官方内容中心与SEO-GEO-spec.md`：官方 Guides/Blog、人工审核、SEO/GEO、分享、品牌视频和仅草稿的 Codex/MCP 边界；M2.1-A 已按其草稿后台边界实现，其余能力待后续阶段。
 - `docs/specs/03b-M2.2-社区治理后台-spec.md`：运营查看用户内容、精选、下架、举报、用户备注、特别关注和审计；待用户审阅。
 - `docs/M2.1-内容中心与社区治理-SEO-GEO-讨论基线.md`：上述两份 Spec 的已确认业务决策和讨论依据。
 - `docs/specs/01-M0-基础架构与M1接口冻结-spec.md`：M0-A / M0-B 的实施范围与验收。

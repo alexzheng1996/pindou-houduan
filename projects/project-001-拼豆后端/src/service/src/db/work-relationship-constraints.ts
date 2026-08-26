@@ -29,6 +29,7 @@ const relationshipDeleteActions: ReadonlyArray<readonly [string, string, DeleteA
   ['work_assets', 'owner', 'restrict'],
   ['work_assets', 'work', 'restrict'],
   ['api_idempotency_records', 'actor', 'restrict'],
+  ['article_media', 'uploader', 'restrict'],
 ]
 
 // Raw tables are deliberately used here because Payload's public relationship

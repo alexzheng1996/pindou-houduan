@@ -5,6 +5,7 @@ import { emailOTP } from 'better-auth/plugins'
 import { genericOAuth } from 'better-auth/plugins/generic-oauth'
 import type { PayloadAuthOptions } from 'payload-auth/better-auth/plugin'
 
+import { restrictAuthInternalCollection } from '@/auth/collections'
 import { accountStatuses } from '@/collections/Users'
 import { isRegistrationEmailAllowed, runtimeConfig } from '@/config/runtime'
 import { sendAuthMail } from '@/auth/mail'
@@ -290,6 +291,18 @@ export const betterAuthPluginOptions = {
     adminRoles: ['admin'],
     allowedFields: ['name'],
     collectionOverrides: ({ collection }) => patchAccountStatusField(collection),
+  },
+  accounts: {
+    hidden: true,
+    collectionOverrides: ({ collection }) => restrictAuthInternalCollection(collection),
+  },
+  sessions: {
+    hidden: true,
+    collectionOverrides: ({ collection }) => restrictAuthInternalCollection(collection),
+  },
+  verifications: {
+    hidden: true,
+    collectionOverrides: ({ collection }) => restrictAuthInternalCollection(collection),
   },
   betterAuthOptions,
 } satisfies PayloadAuthOptions

@@ -47,6 +47,11 @@ const ownRecordsOnly: Access = ({ req }) => {
 
 const workServiceOnly: Access = ({ req }) => isWorkService(req as WorkRequest)
 
+// The content draft service shares the durable idempotency table, but it must
+// not inherit write access to private Works, WorkDocuments, or WorkAssets.
+const idempotencyServiceOnly: Access = ({ req }) =>
+  isWorkService(req as WorkRequest) || (req as WorkRequest).context?.contentService === true
+
 const noAdminBrowse = (): boolean => false
 
 export const Works: CollectionConfig = {
@@ -172,10 +177,10 @@ export const ApiIdempotencyRecords: CollectionConfig = {
   admin: { hidden: true },
   access: {
     admin: noAdminBrowse,
-    create: workServiceOnly,
-    delete: workServiceOnly,
-    read: workServiceOnly,
-    update: workServiceOnly,
+    create: idempotencyServiceOnly,
+    delete: idempotencyServiceOnly,
+    read: idempotencyServiceOnly,
+    update: idempotencyServiceOnly,
   },
   endpoints: false,
   indexes: [

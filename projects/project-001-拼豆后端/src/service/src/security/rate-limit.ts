@@ -29,6 +29,8 @@ type RateLimitPolicy = {
     | 'library-write'
     | 'community-read'
     | 'community-write'
+    | 'content-read'
+    | 'content-write'
   windowMilliseconds: number
 }
 
@@ -47,6 +49,11 @@ const policies = {
   libraryWrite: { maximum: 60, scope: 'library-write', windowMilliseconds: 10 * 60_000 },
   communityRead: { maximum: 180, scope: 'community-read', windowMilliseconds: 10 * 60_000 },
   communityWrite: { maximum: 60, scope: 'community-write', windowMilliseconds: 10 * 60_000 },
+  // Editorial drafts contain unpublished strategy and source material. Their
+  // limits are separate from community traffic so a public-content spike
+  // cannot consume the operations team's write budget.
+  contentRead: { maximum: 120, scope: 'content-read', windowMilliseconds: 10 * 60_000 },
+  contentWrite: { maximum: 30, scope: 'content-write', windowMilliseconds: 10 * 60_000 },
 } as const satisfies Record<string, RateLimitPolicy>
 
 export type AuthenticatedRateLimit = keyof typeof policies

@@ -10,6 +10,7 @@ import { authInternalCollections } from './auth/collections'
 import { betterAuthPluginOptions } from './auth/config'
 import { createPayloadEmailAdapter, registerPayloadMailSender } from './auth/mail'
 import { Users } from './collections/Users'
+import { ArticleMedia, Articles } from './collections/Content'
 import { ApiIdempotencyRecords, WorkAssets, WorkDocuments, Works } from './collections/Works'
 import { runtimeConfig } from './config/runtime'
 import { preserveM1RelationshipDeleteActions } from './db/work-relationship-constraints'
@@ -34,6 +35,8 @@ export default buildConfig({
     WorkDocuments,
     WorkAssets,
     ApiIdempotencyRecords,
+    Articles,
+    ArticleMedia,
   ],
   cors: runtimeConfig.allowedOrigins,
   csrf: runtimeConfig.csrfOrigins,
