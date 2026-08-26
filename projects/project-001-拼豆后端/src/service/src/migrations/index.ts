@@ -13,6 +13,9 @@ import * as migration_20260825_120000_m2_library_community from './20260825_1200
 import * as migration_20260825_160000_m2_work_withdraw_transition_fix from './20260825_160000_m2_work_withdraw_transition_fix';
 import * as migration_20260826_042051_m21_content_drafts from './20260826_042051_m21_content_drafts';
 import * as migration_20260826_103000_m11_inventory_rules from './20260826_103000_m11_inventory_rules';
+import * as migration_20260826_150000_m22_community_moderation from './20260826_150000_m22_community_moderation';
+import * as migration_20260826_151000_m22_community_moderation_backfill from './20260826_151000_m22_community_moderation_backfill';
+import * as migration_20260826_152000_m22_report_dedup_lock from './20260826_152000_m22_report_dedup_lock';
 
 export const migrations = [
   {
@@ -89,5 +92,20 @@ export const migrations = [
     up: migration_20260826_103000_m11_inventory_rules.up,
     down: migration_20260826_103000_m11_inventory_rules.down,
     name: '20260826_103000_m11_inventory_rules'
+  },
+  {
+    up: migration_20260826_150000_m22_community_moderation.up,
+    down: migration_20260826_150000_m22_community_moderation.down,
+    name: '20260826_150000_m22_community_moderation',
+  },
+  {
+    up: migration_20260826_151000_m22_community_moderation_backfill.up,
+    down: migration_20260826_151000_m22_community_moderation_backfill.down,
+    name: '20260826_151000_m22_community_moderation_backfill',
+  },
+  {
+    up: migration_20260826_152000_m22_report_dedup_lock.up,
+    down: migration_20260826_152000_m22_report_dedup_lock.down,
+    name: '20260826_152000_m22_report_dedup_lock',
   },
 ];

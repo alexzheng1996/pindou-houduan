@@ -31,6 +31,8 @@ type RateLimitPolicy = {
     | 'community-write'
     | 'content-read'
     | 'content-write'
+    | 'community-moderation-read'
+    | 'community-moderation-write'
   windowMilliseconds: number
 }
 
@@ -54,6 +56,9 @@ const policies = {
   // cannot consume the operations team's write budget.
   contentRead: { maximum: 120, scope: 'content-read', windowMilliseconds: 10 * 60_000 },
   contentWrite: { maximum: 30, scope: 'content-write', windowMilliseconds: 10 * 60_000 },
+  // 后台读取可能包含完整社区快照，写入会改变公开状态；与普通社区流量分桶。
+  communityModerationRead: { maximum: 120, scope: 'community-moderation-read', windowMilliseconds: 10 * 60_000 },
+  communityModerationWrite: { maximum: 30, scope: 'community-moderation-write', windowMilliseconds: 10 * 60_000 },
 } as const satisfies Record<string, RateLimitPolicy>
 
 export type AuthenticatedRateLimit = keyof typeof policies

@@ -9,6 +9,7 @@ import { BusinessApiError, sha256, stableStringify } from '@/api/business-http'
 import { inspectImageUpload, parseMimeType, type AssetMimeType } from '@/assets/validation'
 import type { ActiveSessionContext } from '@/auth/require-session'
 import { recordAuthenticatedAuditEvent } from '@/security/audit'
+import { ensureCommunityCreatorForPost } from '@/community/admin-service'
 import { withIdempotentWrite } from '@/works/idempotency'
 import { getObjectStore } from '@/storage'
 import { ObjectStoreNotFoundError, ObjectStoreUnavailableError } from '@/storage/object-store'
@@ -345,7 +346,9 @@ export const withdrawCommunityPost = async (context: ActiveSessionContext, postI
     responseStatus: 200, parseStoredResponse: (value) => isRecord(value) ? value : null,
     execute: async () => {
       const db = await getDatabase(context)
-      const result = await db.execute(sql`UPDATE community_posts SET status = 'withdrawn', withdrawn_at = COALESCE(withdrawn_at, NOW()), updated_at = NOW()
+      const result = await db.execute(sql`UPDATE community_posts SET status = 'withdrawn', withdrawn_at = COALESCE(withdrawn_at, NOW()),
+        is_featured = false, featured_at = NULL, featured_by_id = NULL, featured_reason = NULL,
+        moderation_version = moderation_version + 1, moderation_updated_at = NOW(), updated_at = NOW()
         WHERE public_id = ${postId} AND owner_id = ${context.user.id} AND status = 'published' RETURNING public_id, status`)
       if (!result.rows[0]) throw new BusinessApiError('COMMUNITY_POST_NOT_FOUND', '社区图纸不存在或已下架。', 404)
       return { postId, status: 'withdrawn' }
@@ -373,6 +376,10 @@ export const publishCommunityPost = async (context: ActiveSessionContext, bodyVa
     parseStoredResponse: (value) => isRecord(value) ? value : null,
     execute: async () => {
       const db = await getDatabase(context)
+      // A profile is a community-only projection. Creating it together with
+      // the first post gives governance a stable author ID without exposing a
+      // Better Auth user ID on public endpoints.
+      await ensureCommunityCreatorForPost(context)
       // Hold the source Work row until the frozen version and post are written.
       // Otherwise a concurrent deletion can pass the active-state read and
       // commit after the database withdrawal trigger has already run.
@@ -492,10 +499,22 @@ export const reportCommunityPost = async (context: ActiveSessionContext, postId:
       const db = await getDatabase(context)
       const post = await db.execute(sql`SELECT id, public_id FROM community_posts WHERE public_id = ${postId} AND status = 'published'`)
       if (!post.rows[0]) throw new BusinessApiError('COMMUNITY_POST_NOT_FOUND', '社区图纸不存在。', 404)
+      // Legacy community reports did not have a database uniqueness rule. A
+      // scoped advisory lock gives new submissions durable deduplication
+      // without discarding historical duplicate reports during migration.
+      const postDbId = asNumber(post.rows[0].id)
+      await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${context.user.id}:${postDbId}:${reason}`}, 0))`)
+      const existing = await db.execute(sql`SELECT public_id, status FROM community_reports
+        WHERE reporter_id = ${context.user.id} AND post_id = ${postDbId} AND reason = ${reason}
+        ORDER BY id ASC LIMIT 1`)
       const reportId = toId('community_report')
-      await db.execute(sql`INSERT INTO community_reports (public_id, post_id, post_public_id, reporter_id, reason, details) VALUES (${reportId}, ${asNumber(post.rows[0].id)}, ${postId}, ${context.user.id}, ${reason}, ${details}) ON CONFLICT DO NOTHING`)
+      const report = existing.rows[0] ?? (await db.execute(sql`INSERT INTO community_reports
+        (public_id, post_id, post_public_id, reporter_id, reason, details)
+        VALUES (${reportId}, ${postDbId}, ${postId}, ${context.user.id}, ${reason}, ${details})
+        RETURNING public_id, status`)).rows[0]
+      if (!report) throw new BusinessApiError('INTERNAL_ERROR', '服务器暂时无法处理请求。', 500)
       await recordAuthenticatedAuditEvent(context, { action: 'community.reported', outcome: 'allowed', resourcePublicId: postId, resourceType: 'community', route: `POST /api/v1/community/${postId}/report` })
-      return { reportId, status: 'pending' }
+      return { reportId: asString(report.public_id), status: asString(report.status) }
     },
   })
 }

@@ -48,6 +48,8 @@ export type SecurityAuditAction =
   | 'community.copied'
   | 'community.interaction'
   | 'community.reported'
+  | 'community.moderated'
+  | 'community.profile_updated'
   | 'content.draft_created'
   | 'content.draft_updated'
 

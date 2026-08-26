@@ -47,10 +47,12 @@ const ownRecordsOnly: Access = ({ req }) => {
 
 const workServiceOnly: Access = ({ req }) => isWorkService(req as WorkRequest)
 
-// The content draft service shares the durable idempotency table, but it must
-// not inherit write access to private Works, WorkDocuments, or WorkAssets.
+// Content and community moderation share only the durable idempotency table.
+// Neither marker grants access to private Works, WorkDocuments, or WorkAssets.
 const idempotencyServiceOnly: Access = ({ req }) =>
-  isWorkService(req as WorkRequest) || (req as WorkRequest).context?.contentService === true
+  isWorkService(req as WorkRequest)
+  || (req as WorkRequest).context?.contentService === true
+  || (req as WorkRequest).context?.communityModerationService === true
 
 const noAdminBrowse = (): boolean => false
 
