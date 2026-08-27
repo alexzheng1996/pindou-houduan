@@ -18,7 +18,7 @@
 
 ## 3. 已实现的边界
 
-- `MAIL_TRANSPORT=local-outbox` 是本机唯一允许的默认值。认证邮件只进入进程内测试 outbox，测试结束即消失，不打印到控制台或写入数据库、审计、项目文件。
+- `MAIL_TRANSPORT=local-outbox` 是本机唯一允许的默认值。认证邮件只进入进程内测试 outbox，测试结束即消失，不打印到控制台或写入数据库、审计、项目文件；outbox 绑定到本机 Node 进程而非单一 Next 模块实例，避免认证回调与本机读取路由在开发运行时读到不同内存副本。
 - `MAIL_TRANSPORT=resend` 只允许 `APP_ENV=team-test`；必须在部署平台的密钥配置中提供 `RESEND_API_KEY`、`MAIL_FROM_ADDRESS`、`MAIL_FROM_NAME`。
 - 可选 `RESEND_OVERRIDE_RECIPIENT` 可在首轮 team-test 强制把所有邮件改投到一个受控测试收件箱。它不是白名单替代品，注册仍由 `REGISTRATION_ALLOWLIST` 控制。
 - 邮箱验证模板只包含 15 分钟 OTP；密码重设模板只包含一次性重设链接。邮件主题固定带 `[PixoMosaic Team Test]`，避免测试邮件被误认为正式通知。

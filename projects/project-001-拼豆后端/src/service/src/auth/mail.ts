@@ -23,7 +23,14 @@ type AuthMailMessage = LocalMailMessage
 
 type PayloadMailSender = (message: SendEmailOptions) => Promise<unknown>
 
-const localMailOutbox: LocalMailMessage[] = []
+// `next dev` can evaluate the auth callback and route handler through separate
+// module instances. Keep this test-only state on the Node process, rather than
+// on one module instance, so registration and the loopback reader see the same
+// outbox. It remains memory-only and disappears when the local process stops.
+const localMailOutboxGlobalKey = '__pixomosaicLocalMailOutbox'
+type LocalMailRuntime = typeof globalThis & { [localMailOutboxGlobalKey]?: LocalMailMessage[] }
+const localMailRuntime = globalThis as LocalMailRuntime
+const localMailOutbox = (localMailRuntime[localMailOutboxGlobalKey] ??= [])
 let payloadMailSender: PayloadMailSender | null = null
 
 export const getLocalMailOutbox = (): readonly LocalMailMessage[] => localMailOutbox

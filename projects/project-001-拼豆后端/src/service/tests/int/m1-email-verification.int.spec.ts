@@ -3,9 +3,10 @@
 import { randomUUID } from 'crypto'
 
 import { getPayload, type Payload } from 'payload'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { clearLocalMailOutbox, getLatestLocalEmailVerificationOtp, getLocalMailOutbox } from '@/auth/config'
+import { sendAuthMail } from '@/auth/mail'
 import { GET, POST } from '@/app/api/v1/auth/[...all]/route'
 import config from '@/payload.config'
 
@@ -48,6 +49,23 @@ describe('M1 一次性邮箱验证', () => {
 
   afterAll(async () => {
     await payload?.destroy()
+  })
+
+  it('本机 outbox 在独立模块实例之间仍可读取', async () => {
+    const email = `m1-local-outbox-runtime-${randomUUID()}@example.com`
+    const otp = '123456'
+
+    clearLocalMailOutbox()
+    await sendAuthMail({ kind: 'email-verification-otp', email, otp })
+
+    // Simulate the separately evaluated auth callback and route-handler modules
+    // used by the local Next dev runtime. The process-scoped outbox must remain
+    // available without persisting an OTP.
+    vi.resetModules()
+    const { getLatestLocalEmailVerificationOtp: getOtpFromFreshModule } = await import('@/auth/mail')
+    expect(getOtpFromFreshModule(email)).toBe(otp)
+
+    clearLocalMailOutbox()
   })
 
   it('仅把验证码哈希入库，首次验证激活账号，重放与免密码登录均被拒绝', async () => {
