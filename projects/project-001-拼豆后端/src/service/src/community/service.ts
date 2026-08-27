@@ -19,6 +19,16 @@ type QueryResult = { rows: DatabaseRow[] }
 type Database = { execute: (query: unknown) => Promise<QueryResult> }
 type Pool = { query: (query: string, parameters?: readonly unknown[]) => Promise<QueryResult> }
 type PostStatus = 'published' | 'withdrawn' | 'takedown' | 'deleted'
+type CommunityListSort = 'recommended' | 'latest' | 'likes' | 'favorites'
+type CommunityListCursor = {
+  v: 1
+  sort: CommunityListSort
+  filter: string
+  id: number
+  publishedAt: number
+  isFeatured?: boolean
+  score?: number
+}
 
 const postIdPattern = /^community_post_[a-f0-9]{32}$/
 const mediaIdPattern = /^community_media_[a-f0-9]{32}$/
@@ -71,23 +81,77 @@ const parseReportReason = (value: unknown): string => {
   return value
 }
 
-const parseListWindow = (searchParams?: URLSearchParams): { limit: number; offset: number } => {
+const parseCommunityListSort = (searchParams?: URLSearchParams): CommunityListSort => {
+  const value = searchParams?.get('sort') ?? 'recommended'
+  if (value === 'recommended' || value === 'latest' || value === 'likes' || value === 'favorites') return value
+  // Keep the original M2 client values working while the frontend migrates to
+  // the formal, user-facing "likes" sort name.
+  if (value === 'hot' || value === 'popular') return 'likes'
+  throw new BusinessApiError('COMMUNITY_INPUT_INVALID', '排序参数无效。', 422)
+}
+
+const cursorFilter = (query: string, category: string, tag: string): string =>
+  sha256(stableStringify({ query, category, tag }))
+
+const parseListWindow = (
+  searchParams: URLSearchParams | undefined,
+  sort: CommunityListSort,
+  filter: string,
+): { limit: number; cursor: CommunityListCursor | null } => {
   const rawLimit = searchParams?.get('limit')
   const requestedLimit = rawLimit ? Number(rawLimit) : 24
   const limit = Number.isSafeInteger(requestedLimit) ? Math.min(50, Math.max(1, requestedLimit)) : 24
-  const cursor = searchParams?.get('cursor')
-  if (!cursor) return { limit, offset: 0 }
+  const rawCursor = searchParams?.get('cursor')
+  if (!rawCursor) return { limit, cursor: null }
   try {
-    const decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { offset?: unknown }
-    const offset = decoded.offset
-    if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0) throw new Error('invalid cursor')
-    return { limit, offset }
+    const decoded = JSON.parse(Buffer.from(rawCursor, 'base64url').toString('utf8')) as Partial<CommunityListCursor>
+    if (
+      decoded.v !== 1
+      || decoded.sort !== sort
+      || decoded.filter !== filter
+      || !Number.isSafeInteger(decoded.id)
+      || (decoded.id as number) < 1
+      || !Number.isSafeInteger(decoded.publishedAt)
+      || (decoded.publishedAt as number) < 0
+    ) throw new Error('invalid cursor')
+    if (sort === 'recommended' && typeof decoded.isFeatured !== 'boolean') throw new Error('invalid cursor')
+    if ((sort === 'likes' || sort === 'favorites') && (!Number.isSafeInteger(decoded.score) || (decoded.score as number) < 0)) throw new Error('invalid cursor')
+    return {
+      limit,
+      cursor: {
+        v: 1,
+        sort,
+        filter,
+        id: decoded.id as number,
+        publishedAt: decoded.publishedAt as number,
+        ...(sort === 'recommended' ? { isFeatured: decoded.isFeatured } : {}),
+        ...(sort === 'likes' || sort === 'favorites' ? { score: decoded.score } : {}),
+      },
+    }
   } catch {
     throw new BusinessApiError('COMMUNITY_INPUT_INVALID', '分页游标无效。', 422)
   }
 }
 
-const encodeListCursor = (offset: number): string => Buffer.from(JSON.stringify({ offset }), 'utf8').toString('base64url')
+const publishedAtValue = (value: unknown): number => {
+  const timestamp = value instanceof Date ? value.getTime() : typeof value === 'string' ? new Date(value).getTime() : NaN
+  if (Number.isSafeInteger(timestamp) && timestamp >= 0) return timestamp
+  throw new BusinessApiError('INTERNAL_ERROR', '服务器暂时无法处理请求。', 500)
+}
+
+const encodeListCursor = (sort: CommunityListSort, filter: string, row: DatabaseRow): string => {
+  const cursor: CommunityListCursor = {
+    v: 1,
+    sort,
+    filter,
+    id: asNumber(row.db_post_id),
+    publishedAt: publishedAtValue(row.published_at),
+    ...(sort === 'recommended' ? { isFeatured: Boolean(row.is_featured) } : {}),
+    ...(sort === 'likes' ? { score: asNumber(row.like_count) } : {}),
+    ...(sort === 'favorites' ? { score: asNumber(row.favorite_count) } : {}),
+  }
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url')
+}
 
 const hasDatabaseCode = (error: unknown, code: string): boolean => {
   if (!error || typeof error !== 'object') return false
@@ -247,25 +311,63 @@ const postProjection = (row: DatabaseRow, media: DatabaseRow[] = []) => ({
   publishedAt: row.published_at instanceof Date ? row.published_at.toISOString() : asString(row.published_at),
 })
 
-export const listCommunity = async (context?: ActiveSessionContext, searchParams?: URLSearchParams): Promise<Record<string, unknown>> => {
+const communityListCursorClause = (sort: CommunityListSort): string => {
+  if (sort === 'recommended') return `AND ($4::boolean IS NULL OR (
+    p.is_featured < $4::boolean OR (p.is_featured = $4::boolean AND (
+      p.published_at < $5::timestamptz OR (p.published_at = $5::timestamptz AND p.id < $6::integer)
+    ))
+  ))`
+  if (sort === 'latest') return `AND ($4::timestamptz IS NULL OR (
+    p.published_at < $4::timestamptz OR (p.published_at = $4::timestamptz AND p.id < $5::integer)
+  ))`
+  const countColumn = sort === 'likes' ? 'p.like_count' : 'p.favorite_count'
+  return `AND ($4::integer IS NULL OR (
+    ${countColumn} < $4::integer OR (${countColumn} = $4::integer AND (
+      p.published_at < $5::timestamptz OR (p.published_at = $5::timestamptz AND p.id < $6::integer)
+    ))
+  ))`
+}
+
+const communityListOrder = (sort: CommunityListSort): string => {
+  if (sort === 'recommended') return 'p.is_featured DESC, p.published_at DESC, p.id DESC'
+  if (sort === 'latest') return 'p.published_at DESC, p.id DESC'
+  return `${sort === 'likes' ? 'p.like_count' : 'p.favorite_count'} DESC, p.published_at DESC, p.id DESC`
+}
+
+const listCommunityFromPool = async (pool: Pool, searchParams?: URLSearchParams): Promise<Record<string, unknown>> => {
   const query = searchParams?.get('q')?.trim() ?? ''
   const category = searchParams?.get('category')?.trim() ?? ''
   const tag = searchParams?.get('tag')?.trim() ?? ''
-  const sort = searchParams?.get('sort') ?? 'recommended'
-  const order = sort === 'hot' || sort === 'popular' ? 'p.like_count DESC, p.published_at DESC, p.id DESC' : sort === 'favorites' ? 'p.favorite_count DESC, p.published_at DESC, p.id DESC' : 'p.published_at DESC, p.id DESC'
-  const { limit, offset } = parseListWindow(searchParams)
-  const result = context
-    ? await getPool(context).query(`SELECT p.id AS db_post_id, p.public_id AS post_public_id, p.title, p.category, p.tags, p.status, p.allow_copy, p.author_name_snapshot, p.source_work_revision, p.like_count, p.favorite_count, p.published_at, v.public_id AS version_public_id, v.kind, v.grid_columns, v.grid_rows, v.color_count, v.total_bead_count, v.difficulty, v.bead_size_mm FROM community_posts p JOIN published_pattern_versions v ON v.id = p.current_version_id WHERE p.status = 'published' AND ($1 = '' OR p.title ILIKE '%' || $1 || '%' OR p.tags::text ILIKE '%' || $1 || '%') AND ($2 = '' OR p.category = $2) AND ($3 = '' OR p.tags @> jsonb_build_array($3::text)) ORDER BY ${order} LIMIT $4 OFFSET $5`, [query, category, tag, limit + 1, offset])
-    : await (async () => {
-      const pool = (globalThis as unknown as { __pixomosaicCommunityPool?: Pool }).__pixomosaicCommunityPool
-      if (!pool) throw new BusinessApiError('TRANSACTION_UNAVAILABLE', '服务器暂时无法处理请求。', 500)
-      return pool.query(`SELECT p.id AS db_post_id, p.public_id AS post_public_id, p.title, p.category, p.tags, p.status, p.allow_copy, p.author_name_snapshot, p.source_work_revision, p.like_count, p.favorite_count, p.published_at, v.public_id AS version_public_id, v.kind, v.grid_columns, v.grid_rows, v.color_count, v.total_bead_count, v.difficulty, v.bead_size_mm FROM community_posts p JOIN published_pattern_versions v ON v.id = p.current_version_id WHERE p.status = 'published' AND ($1 = '' OR p.title ILIKE '%' || $1 || '%' OR p.tags::text ILIKE '%' || $1 || '%') AND ($2 = '' OR p.category = $2) AND ($3 = '' OR p.tags @> jsonb_build_array($3::text)) ORDER BY ${order} LIMIT $4 OFFSET $5`, [query, category, tag, limit + 1, offset])
-    })()
+  const sort = parseCommunityListSort(searchParams)
+  const filter = cursorFilter(query, category, tag)
+  const { limit, cursor } = parseListWindow(searchParams, sort, filter)
+  const cursorValues = sort === 'latest'
+    ? [cursor ? new Date(cursor.publishedAt).toISOString() : null, cursor?.id ?? null]
+    : sort === 'recommended'
+      ? [cursor?.isFeatured ?? null, cursor ? new Date(cursor.publishedAt).toISOString() : null, cursor?.id ?? null]
+      : [cursor?.score ?? null, cursor ? new Date(cursor.publishedAt).toISOString() : null, cursor?.id ?? null]
+  const result = await pool.query(`SELECT p.id AS db_post_id, p.public_id AS post_public_id, p.title, p.category, p.tags, p.status, p.allow_copy, p.is_featured, p.author_name_snapshot, p.source_work_revision, p.like_count, p.favorite_count, p.published_at, v.public_id AS version_public_id, v.kind, v.grid_columns, v.grid_rows, v.color_count, v.total_bead_count, v.difficulty, v.bead_size_mm
+    FROM community_posts p JOIN published_pattern_versions v ON v.id = p.current_version_id
+    WHERE p.status = 'published' AND ($1 = '' OR p.title ILIKE '%' || $1 || '%' OR p.tags::text ILIKE '%' || $1 || '%')
+      AND ($2 = '' OR p.category = $2) AND ($3 = '' OR p.tags @> jsonb_build_array($3::text))
+      ${communityListCursorClause(sort)}
+    ORDER BY ${communityListOrder(sort)} LIMIT $${4 + cursorValues.length}`,
+  [query, category, tag, ...cursorValues, limit + 1])
   const pageRows = result.rows.slice(0, limit)
-  const media = pageRows.length ? await (context ? getPool(context) : (globalThis as unknown as { __pixomosaicCommunityPool?: Pool }).__pixomosaicCommunityPool!).query(`SELECT post_id, public_id, role, sort_order, mime_type, alt_text FROM community_post_media WHERE post_id = ANY($1::int[]) AND status = 'ready' ORDER BY sort_order ASC, id ASC`, [pageRows.map((row) => asNumber(row.db_post_id))]) : { rows: [] }
+  const media = pageRows.length ? await pool.query(`SELECT post_id, public_id, role, sort_order, mime_type, alt_text FROM community_post_media WHERE post_id = ANY($1::int[]) AND status = 'ready' ORDER BY sort_order ASC, id ASC`, [pageRows.map((row) => asNumber(row.db_post_id))]) : { rows: [] }
   const mediaByPost = new Map<number, DatabaseRow[]>()
   media.rows.forEach((row) => mediaByPost.set(asNumber(row.post_id), [...(mediaByPost.get(asNumber(row.post_id)) ?? []), row]))
-  return { posts: pageRows.map((row) => postProjection(row, mediaByPost.get(asNumber(row.db_post_id)) ?? [])), nextCursor: result.rows.length > limit ? encodeListCursor(offset + limit) : null }
+  return {
+    posts: pageRows.map((row) => postProjection(row, mediaByPost.get(asNumber(row.db_post_id)) ?? [])),
+    nextCursor: result.rows.length > limit ? encodeListCursor(sort, filter, pageRows[pageRows.length - 1]!) : null,
+  }
+}
+
+export const listCommunity = async (context?: ActiveSessionContext, searchParams?: URLSearchParams): Promise<Record<string, unknown>> => {
+  if (context) return listCommunityFromPool(getPool(context), searchParams)
+  const pool = (globalThis as unknown as { __pixomosaicCommunityPool?: Pool }).__pixomosaicCommunityPool
+  if (!pool) throw new BusinessApiError('TRANSACTION_UNAVAILABLE', '服务器暂时无法处理请求。', 500)
+  return listCommunityFromPool(pool, searchParams)
 }
 
 // Anonymous reads use a short-lived Payload instance in the route. This helper
@@ -273,18 +375,7 @@ export const listCommunity = async (context?: ActiveSessionContext, searchParams
 export const listCommunityWithPayload = async (payload: ActiveSessionContext['payload'], searchParams: URLSearchParams): Promise<Record<string, unknown>> => {
   const pool = (payload.db as unknown as { pool?: Pool }).pool
   if (!pool) throw new BusinessApiError('TRANSACTION_UNAVAILABLE', '服务器暂时无法处理请求。', 500)
-  const query = searchParams.get('q')?.trim() ?? ''
-  const category = searchParams.get('category')?.trim() ?? ''
-  const tag = searchParams.get('tag')?.trim() ?? ''
-  const sort = searchParams.get('sort') ?? 'recommended'
-  const order = sort === 'hot' || sort === 'popular' ? 'p.like_count DESC, p.published_at DESC, p.id DESC' : sort === 'favorites' ? 'p.favorite_count DESC, p.published_at DESC, p.id DESC' : 'p.published_at DESC, p.id DESC'
-  const { limit, offset } = parseListWindow(searchParams)
-  const result = await pool.query(`SELECT p.id AS db_post_id, p.public_id AS post_public_id, p.title, p.category, p.tags, p.status, p.allow_copy, p.author_name_snapshot, p.source_work_revision, p.like_count, p.favorite_count, p.published_at, v.public_id AS version_public_id, v.kind, v.grid_columns, v.grid_rows, v.color_count, v.total_bead_count, v.difficulty, v.bead_size_mm FROM community_posts p JOIN published_pattern_versions v ON v.id = p.current_version_id WHERE p.status = 'published' AND ($1 = '' OR p.title ILIKE '%' || $1 || '%' OR p.tags::text ILIKE '%' || $1 || '%') AND ($2 = '' OR p.category = $2) AND ($3 = '' OR p.tags @> jsonb_build_array($3::text)) ORDER BY ${order} LIMIT $4 OFFSET $5`, [query, category, tag, limit + 1, offset])
-  const pageRows = result.rows.slice(0, limit)
-  const media = pageRows.length ? await pool.query(`SELECT post_id, public_id, role, sort_order, mime_type, alt_text FROM community_post_media WHERE post_id = ANY($1::int[]) AND status = 'ready' ORDER BY sort_order ASC, id ASC`, [pageRows.map((row) => asNumber(row.db_post_id))]) : { rows: [] }
-  const mediaByPost = new Map<number, DatabaseRow[]>()
-  media.rows.forEach((row) => mediaByPost.set(asNumber(row.post_id), [...(mediaByPost.get(asNumber(row.post_id)) ?? []), row]))
-  return { posts: pageRows.map((row) => postProjection(row, mediaByPost.get(asNumber(row.db_post_id)) ?? [])), nextCursor: result.rows.length > limit ? encodeListCursor(offset + limit) : null }
+  return listCommunityFromPool(pool, searchParams)
 }
 
 export const getCommunityPost = async (payload: ActiveSessionContext['payload'], postId: string, viewerId: number | null = null): Promise<Record<string, unknown>> => {

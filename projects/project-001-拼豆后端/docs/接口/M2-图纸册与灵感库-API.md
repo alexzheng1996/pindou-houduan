@@ -1,10 +1,10 @@
 # M2 图纸册与灵感库 API（本地 v1）
 
-> 本文只描述本次本地 M2 实现的业务边界。公开社区层使用独立表和冻结版本，既有 `Work`、`WorkDocument`、`WorkAsset` 仍是 owner-only/private。
+> 状态：M2 后端已在本机实现并经集成测试验证；本文是前端联调的正式接口事实。公开社区层使用独立表和冻结版本，既有 `Work`、`WorkDocument`、`WorkAsset` 仍是 owner-only/private。
 
 ## 图纸册
 
-- `GET /api/v1/library`：当前活动用户的 active Work、文件夹和标签。Work 没有整理记录时返回默认 `makingStatus: draft`。
+- `GET /api/v1/library`：当前活动用户的全部 active Work、文件夹和标签。当前**没有**服务端筛选、排序参数或分页：始终按 `Work.updatedAt DESC, id DESC` 返回全部结果，且 `nextCursor: null`；Work 没有整理记录时返回默认 `makingStatus: draft`。
 - `GET /api/v1/library/trash`：当前用户 `pending_deletion` Work 和 `recoverableUntil`。
 - `PATCH /api/v1/library/works/:workId`：请求 `{ folderId: string|null, labelIds: string[], makingStatus: draft|to_make|making|completed }`。最多 5 个标签，每个标签最多 20 个 Unicode 字符；只写整理表，不触发库存。
 - `POST /api/v1/library/works/:workId/restore`：请求 `{ expectedRevision }`，仅恢复本人 30 天窗口内的 `pending_deletion` Work。恢复不重新发布曾被下架的社区帖子。
@@ -12,7 +12,9 @@
 
 ## 社区
 
-- `GET /api/v1/community`、`GET /api/v1/community/:postId`：匿名可读的 published 安全投影。列表支持 `limit`（1-50，默认 24）和 opaque `cursor` 分页。只返回社区 public ID、标题、分类、标签、作者公开昵称、版本统计、社区媒体 public ID 和互动统计；不返回邮箱、内部数字 ID、WorkDocument、WorkAsset、storageKey 或私有 URL。
+- `GET /api/v1/community`、`GET /api/v1/community/:postId`：匿名可读的 `published` 安全投影。列表支持 `q`、`category`、`tag`、`sort`、`limit`（1–50，默认 24）及 opaque seek `cursor`；cursor 绑定当前排序和三个筛选项，混用或格式错误返回 `422 COMMUNITY_INPUT_INVALID`。只返回社区 public ID、标题、分类、标签、作者公开昵称、版本统计、社区媒体 public ID、相对受控媒体路径（`/api/v1/community/media/:mediaId`）和互动统计；不返回邮箱、内部数字 ID、WorkDocument、WorkAsset、storageKey、私有 URL 或私有媒体。
+- 社区正式排序为：`recommended`（默认；`isFeatured=true` 的已公开帖子优先，组内按 `publishedAt DESC, id DESC`；**没有任何精选时等同最新**）、`latest`（`publishedAt DESC, id DESC`）、`likes`（前端显示“点赞最多”；`likeCount DESC, publishedAt DESC, id DESC`）、`favorites`（`favoriteCount DESC, publishedAt DESC, id DESC`）。`hot`、`popular` 仅兼容旧调用，均等价 `likes`；新前端和新文档不得使用“最热”。未知 `sort` 返回 `422 COMMUNITY_INPUT_INVALID`。
+- `nextCursor` 只基于该请求稳定排序中的最后一条记录继续读取，包含排序键、`publishedAt`、内部并列键和筛选摘要；同一排序/筛选条件下不会因同一排序键的并列项重复或漏项。排序数据在翻页期间发生变化时，cursor 不提供跨请求快照隔离，前端应把刷新当作新的列表会话。
 - `POST /api/v1/community/media/upload`：认证用户上传独立社区衍生媒体；通过 `X-Community-Media-Role: cover|gallery` 标记角色，返回 `mediaId`。媒体只能先处于当前用户的未绑定状态，再被自己的发布请求绑定。
 - `POST /api/v1/community`：已验证且活动账号从自己的 active Work 发布。请求至少包含 `workId`、`title`、`category`、`tags`、`copyrightConfirmed: true`、`allowCopy`（默认 true）、`coverMediaId`；可带最多 9 个 `galleryMediaIds`。服务端检查媒体 owner/角色/未绑定状态后冻结 `PublishedPatternVersion`，私有 Work 后续编辑不改变该版本。
 - `PATCH /api/v1/community/:postId`：作者可改标题、社区封面、分类、标签和 `allowCopy`，不覆盖冻结图纸内容。`coverMediaId` 必须是当前用户上传、尚未绑定其他帖子的独立社区封面；过程附图本期不可替换。
@@ -22,10 +24,10 @@
 - `POST /api/v1/community/:postId/report`：理由为 `copyright`、`adult_violence`、`harassment`、`spam` 或 `privacy`；举报人只在受控表和审计中保存。
 - `GET /api/v1/community/media/:mediaId`：仅允许 published 帖子的独立社区媒体；当前本地发布接口只冻结 media 元数据，未配置对象存储时返回 `COMMUNITY_MEDIA_NOT_FOUND`，不会退回私有 WorkAsset。
 
-## 社区资料（待 M2 Spec 批准后实现）
+## 社区资料（已实现）
 
-- `GET /api/v1/me/community-profile`：认证用户读取自己的社区资料和全部社交链接，包含每条 `visibility: public|hidden`。
-- `PATCH /api/v1/me/community-profile`：认证用户维护自己的公开展示资料和社交链接。每条链接使用 `{ platform, url, visibility }`；第一版允许 `instagram|tiktok|youtube|pinterest|facebook|x|reddit|linkedin`，每平台最多一条，HTTPS 且必须匹配平台允许域名；默认 `hidden`。
+- `GET /api/v1/community/profile`：认证用户读取自己的社区资料和全部社交链接，包含每条 `visibility: public|hidden`。
+- `PATCH /api/v1/community/profile`：认证用户维护自己的 `displayName`、`bio`。社交链接通过 `PUT /api/v1/community/profile/social-links/:platform` 以 `{ url, visibility }` 单平台写入，`DELETE` 删除；第一版允许 `instagram|tiktok|youtube|pinterest|facebook|x|reddit|linkedin`，每平台最多一条，HTTPS 且必须匹配平台允许域名，默认/可选 `hidden`。
 - `GET /api/v1/community/creators/:creatorId`：匿名只读作者资料安全投影，只返回公开展示资料和 `visibility=public` 的社交链接；不返回隐藏链接、邮箱、内部用户 ID、私密 Work 或运营备注。
 - 社交链接不能是短链、跳转链接、嵌入代码或含凭据的 URL；公开链接在前端以 `rel="ugc nofollow noopener noreferrer"` 打开，不写入 JSON-LD `sameAs`、sitemap 或分享图。
 

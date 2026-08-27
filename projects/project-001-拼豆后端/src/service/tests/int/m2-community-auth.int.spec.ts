@@ -7,6 +7,8 @@ import sharp from 'sharp'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { POST as authPost } from '@/app/api/v1/auth/[...all]/route'
+import { POST as featureCommunity } from '@/app/api/v1/admin/community/posts/[id]/feature/route'
+import { GET as listModerationPosts } from '@/app/api/v1/admin/community/posts/route'
 import { POST as publishCommunity, GET as listCommunity } from '@/app/api/v1/community/route'
 import { GET as getCommunity, PATCH as updateCommunity } from '@/app/api/v1/community/[id]/route'
 import { POST as copyCommunity } from '@/app/api/v1/community/[id]/copy/route'
@@ -186,6 +188,24 @@ const interaction = async (postId: string, kind: 'like' | 'favorite', user: Test
   return handler(request, { params: Promise.resolve({ id: postId, kind }) })
 }
 
+const setRole = async (userId: number, role: 'user' | 'staff' | 'admin') => {
+  const pool = (payload.db as unknown as { pool: { query: (query: string, values: unknown[]) => Promise<unknown> } }).pool
+  await pool.query('DELETE FROM users_role WHERE parent_id = $1', [userId])
+  await pool.query('INSERT INTO users_role ("order", parent_id, value) VALUES (0, $1, $2)', [userId, role])
+}
+
+const listPostIds = async (sort: string, limit = 24, cursor?: string, query?: string): Promise<{ postIds: string[]; nextCursor: string | null }> => {
+  const url = new URL(`${origin}/api/v1/community`)
+  url.searchParams.set('sort', sort)
+  url.searchParams.set('limit', String(limit))
+  if (cursor) url.searchParams.set('cursor', cursor)
+  if (query) url.searchParams.set('q', query)
+  const response = await listCommunity(new Request(url))
+  expect(response.status).toBe(200)
+  const body = await response.json() as { posts: Array<{ postId: string }>; nextCursor: string | null }
+  return { postIds: body.posts.map((post) => post.postId), nextCursor: body.nextCursor }
+}
+
 describe('M2 认证发布、复制与回收主链路', () => {
   beforeAll(async () => { payload = await getPayload({ config: await config }) })
   beforeEach(async () => { await payload.delete({ collection: 'rateLimit', overrideAccess: true, where: {} }) })
@@ -347,5 +367,48 @@ describe('M2 认证发布、复制与回收主链路', () => {
     expect(withdrawnRetry.status).toBe(200)
     const withdrawnPublic = await getCommunity(new Request(`${origin}/api/v1/community/${postId}`), { params: Promise.resolve({ id: postId }) })
     expect(withdrawnPublic.status).toBe(404)
+  })
+
+  it('公开排序固定精选优先、无精选按最新回退、稳定游标和点赞最多兼容别名', async () => {
+    const author = await signedInUser('M2 排序作者')
+    const staff = await signedInUser('M2 排序运营')
+    await setRole(staff.userId, 'staff')
+
+    const sortKey = `sort-${randomUUID()}`
+    const oldest = await publish(author, await createActivePattern(author, `${sortKey}-最早作品`), `${sortKey}-最早帖子`)
+    const middle = await publish(author, await createActivePattern(author, `${sortKey}-中间作品`), `${sortKey}-中间帖子`)
+    const newest = await publish(author, await createActivePattern(author, `${sortKey}-最新作品`), `${sortKey}-最新帖子`)
+
+    const beforeFeature = await listPostIds('recommended', 3, undefined, sortKey)
+    expect(beforeFeature.postIds).toEqual([newest, middle, oldest])
+
+    const moderation = await listModerationPosts(new Request(`${origin}/api/v1/admin/community/posts?status=published`, { headers: { cookie: staff.cookie, origin } }))
+    expect(moderation.status).toBe(200)
+    const queue = await moderation.json() as { posts: Array<{ postId: string; moderationVersion: number }> }
+    const middleVersion = queue.posts.find((post) => post.postId === middle)?.moderationVersion
+    const oldestVersion = queue.posts.find((post) => post.postId === oldest)?.moderationVersion
+    if (!middleVersion || !oldestVersion) throw new Error('排序测试未取得精选版本。')
+    expect((await featureCommunity(jsonWrite(`${origin}/api/v1/admin/community/posts/${middle}/feature`, { featured: true, reason: '排序测试精选', expectedVersion: middleVersion }, staff.cookie), { params: Promise.resolve({ id: middle }) })).status).toBe(200)
+    expect((await featureCommunity(jsonWrite(`${origin}/api/v1/admin/community/posts/${oldest}/feature`, { featured: true, reason: '排序测试精选', expectedVersion: oldestVersion }, staff.cookie), { params: Promise.resolve({ id: oldest }) })).status).toBe(200)
+
+    const featuredFirst = await listPostIds('recommended', 3, undefined, sortKey)
+    expect(featuredFirst.postIds).toEqual([middle, oldest, newest])
+    expect((await listPostIds('latest', 3, undefined, sortKey)).postIds).toEqual([newest, middle, oldest])
+
+    const featuredPageOne = await listPostIds('recommended', 1, undefined, sortKey)
+    expect(featuredPageOne.postIds).toEqual([middle])
+    expect(featuredPageOne.nextCursor).toBeTruthy()
+    const featuredPageTwo = await listPostIds('recommended', 1, featuredPageOne.nextCursor!, sortKey)
+    expect(featuredPageTwo.postIds).toEqual([oldest])
+    const featuredPageThree = await listPostIds('recommended', 1, featuredPageTwo.nextCursor!, sortKey)
+    expect(featuredPageThree.postIds).toEqual([newest])
+    expect((await listCommunity(new Request(`${origin}/api/v1/community?sort=latest&limit=1&q=${encodeURIComponent(sortKey)}&cursor=${encodeURIComponent(featuredPageOne.nextCursor!)}`))).status).toBe(422)
+
+    expect((await interaction(oldest, 'like', author, true, `m2-sort-like-${randomUUID()}`)).status).toBe(200)
+    expect((await interaction(oldest, 'like', staff, true, `m2-sort-like-${randomUUID()}`)).status).toBe(200)
+    expect((await interaction(middle, 'like', staff, true, `m2-sort-like-${randomUUID()}`)).status).toBe(200)
+    expect((await listPostIds('likes', 3, undefined, sortKey)).postIds).toEqual([oldest, middle, newest])
+    expect((await listPostIds('hot', 3, undefined, sortKey)).postIds).toEqual([oldest, middle, newest])
+    expect((await listPostIds('popular', 3, undefined, sortKey)).postIds).toEqual([oldest, middle, newest])
   })
 })
