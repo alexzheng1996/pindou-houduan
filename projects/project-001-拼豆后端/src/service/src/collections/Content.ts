@@ -124,126 +124,98 @@ export const Articles: CollectionConfig = {
   ],
   fields: [
     {
-      name: 'publicId',
-      type: 'text',
-      required: true,
-      admin: { readOnly: true },
-    },
-    {
-      name: 'section',
-      type: 'select',
-      required: true,
-      options: articleSections,
-    },
-    {
-      name: 'slug',
-      type: 'text',
-      required: true,
-      minLength: 3,
-      maxLength: 120,
-      validate: validateSlug,
-    },
-    {
-      name: 'title',
-      type: 'text',
-      required: true,
-      minLength: 3,
-      maxLength: 160,
-    },
-    {
-      name: 'excerpt',
-      type: 'textarea',
-      required: true,
-      minLength: 20,
-      maxLength: 320,
-    },
-    {
-      name: 'body',
-      type: 'richText',
-      required: true,
-    },
-    {
-      name: 'articleType',
-      type: 'select',
-      required: true,
-      options: articleTypes,
-    },
-    {
-      name: 'authorType',
-      type: 'select',
-      required: true,
-      defaultValue: 'staff',
-      options: authorTypes,
-    },
-    {
-      name: 'authorDisplayName',
-      type: 'text',
-      required: true,
-      minLength: 1,
-      maxLength: 120,
-    },
-    {
-      name: 'sourceList',
-      type: 'array',
-      minRows: 1,
-      maxRows: 20,
-      labels: { plural: 'Sources', singular: 'Source' },
-      fields: [
-        { name: 'label', type: 'text', required: true, maxLength: 160 },
+      type: 'tabs',
+      tabs: [
         {
-          name: 'url',
-          type: 'text',
-          required: true,
-          maxLength: 2_000,
-          validate: validateHttpsUrl,
+          label: 'Article',
+          fields: [
+            {
+              type: 'row',
+              fields: [
+                { name: 'publicId', type: 'text', required: true, admin: { readOnly: true, width: '50%' } },
+                { name: 'section', type: 'select', required: true, options: articleSections, admin: { width: '50%' } },
+              ],
+            },
+            {
+              type: 'row',
+              fields: [
+                { name: 'slug', type: 'text', required: true, minLength: 3, maxLength: 120, validate: validateSlug, admin: { width: '50%' } },
+                { name: 'articleType', type: 'select', required: true, options: articleTypes, admin: { width: '50%' } },
+              ],
+            },
+            { name: 'title', type: 'text', required: true, minLength: 3, maxLength: 160 },
+            { name: 'excerpt', type: 'textarea', required: true, minLength: 20, maxLength: 320 },
+            { name: 'body', type: 'richText', required: true },
+            {
+              type: 'row',
+              fields: [
+                { name: 'authorType', type: 'select', required: true, defaultValue: 'staff', options: authorTypes, admin: { width: '50%' } },
+                { name: 'authorDisplayName', type: 'text', required: true, minLength: 1, maxLength: 120, admin: { width: '50%' } },
+              ],
+            },
+          ],
+        },
+        {
+          label: 'Sources & quality',
+          fields: [
+            {
+              type: 'collapsible',
+              label: 'Source list',
+              admin: { initCollapsed: false },
+              fields: [{
+                name: 'sourceList', type: 'array', minRows: 1, maxRows: 20,
+                labels: { plural: 'Sources', singular: 'Source' },
+                fields: [
+                  { name: 'label', type: 'text', required: true, maxLength: 160 },
+                  { name: 'url', type: 'text', required: true, maxLength: 2_000, validate: validateHttpsUrl },
+                ],
+              }],
+            },
+            {
+              type: 'collapsible',
+              label: 'Content quality',
+              admin: { initCollapsed: true },
+              fields: [{
+                name: 'contentQuality', type: 'group', fields: [
+                  {
+                    type: 'row', fields: [
+                      { name: 'topicIntent', type: 'text', maxLength: 240, admin: { width: '50%' } },
+                      { name: 'factCheckStatus', type: 'select', required: true, defaultValue: 'not_started', options: factCheckStatuses, admin: { width: '50%' } },
+                    ],
+                  },
+                  { name: 'editorNotes', type: 'textarea', maxLength: 2_000 },
+                ],
+              }],
+            },
+          ],
+        },
+        {
+          label: 'SEO suggestions',
+          fields: [{
+            type: 'collapsible', label: 'SEO suggestions', admin: { initCollapsed: true }, fields: [{
+              name: 'seoSuggestions', type: 'group', fields: [
+                {
+                  type: 'row', fields: [
+                    { name: 'seoTitle', type: 'text', maxLength: 160, admin: { width: '50%' } },
+                    { name: 'primaryTopic', type: 'text', maxLength: 160, admin: { width: '50%' } },
+                  ],
+                },
+                { name: 'metaDescription', type: 'textarea', maxLength: 320 },
+                { name: 'twitterCard', type: 'select', defaultValue: 'summary_large_image', options: twitterCards, admin: { width: '50%' } },
+              ],
+            }],
+          }],
+        },
+        {
+          label: 'System',
+          fields: [{
+            type: 'row', fields: [
+              { name: 'status', type: 'select', required: true, defaultValue: 'draft', options: articleStatuses, admin: { readOnly: true, width: '50%' } },
+              { name: 'version', type: 'number', required: true, min: 1, defaultValue: 1, admin: { readOnly: true, width: '50%' } },
+            ],
+          }],
         },
       ],
-    },
-    {
-      name: 'contentQuality',
-      type: 'group',
-      fields: [
-        { name: 'topicIntent', type: 'text', maxLength: 240 },
-        {
-          name: 'factCheckStatus',
-          type: 'select',
-          required: true,
-          defaultValue: 'not_started',
-          options: factCheckStatuses,
-        },
-        { name: 'editorNotes', type: 'textarea', maxLength: 2_000 },
-      ],
-    },
-    {
-      name: 'seoSuggestions',
-      type: 'group',
-      fields: [
-        { name: 'seoTitle', type: 'text', maxLength: 160 },
-        { name: 'metaDescription', type: 'textarea', maxLength: 320 },
-        { name: 'primaryTopic', type: 'text', maxLength: 160 },
-        {
-          name: 'twitterCard',
-          type: 'select',
-          defaultValue: 'summary_large_image',
-          options: twitterCards,
-        },
-      ],
-    },
-    {
-      name: 'status',
-      type: 'select',
-      required: true,
-      defaultValue: 'draft',
-      options: articleStatuses,
-      admin: { readOnly: true },
-    },
-    {
-      name: 'version',
-      type: 'number',
-      required: true,
-      min: 1,
-      defaultValue: 1,
-      admin: { readOnly: true },
     },
   ],
 }
