@@ -1,6 +1,6 @@
 // 文件开头说明：M1 认证配置只组合成熟的 Better Auth 能力，并把业务账户状态
 // 与本地邮件 outbox 留在本项目。此处不读取或保存任何第三方 OAuth 凭据。
-import type { CollectionConfig, SelectField } from 'payload'
+import type { CollectionConfig, DateField, SelectField } from 'payload'
 import { emailOTP } from 'better-auth/plugins'
 import { genericOAuth } from 'better-auth/plugins/generic-oauth'
 import type { PayloadAuthOptions } from 'payload-auth/better-auth/plugin'
@@ -12,6 +12,7 @@ import { sendAuthMail } from '@/auth/mail'
 
 const emailVerificationExpiresInSeconds = 15 * 60
 const passwordResetExpiresInSeconds = 60 * 60
+const adminInvitationLifetimeMilliseconds = 7 * 24 * 60 * 60 * 1000
 
 const googleOAuthPlugin =
   runtimeConfig.googleOAuth.mode === 'disabled'
@@ -78,6 +79,37 @@ const patchAccountStatusField = (collection: CollectionConfig): CollectionConfig
       // Keep it when changing the field's Payload presentation type.
       custom: field.custom,
     } satisfies SelectField
+  }),
+})
+
+const validateAdminInvitationExpiresAt = (value: unknown): true | string => {
+  if (value === null || value === undefined || value === '') {
+    return '邀请到期时间必填。'
+  }
+
+  const timestamp = value instanceof Date ? value.getTime() : typeof value === 'string' ? new Date(value).getTime() : Number.NaN
+  if (!Number.isFinite(timestamp) || timestamp <= Date.now()) {
+    return '邀请到期时间必须是未来时间。'
+  }
+
+  return true
+}
+
+const patchAdminInvitationCollection = (collection: CollectionConfig): CollectionConfig => ({
+  ...collection,
+  fields: collection.fields?.map((field) => {
+    if (!('name' in field) || field.name !== 'expiresAt' || field.type !== 'date') {
+      return field
+    }
+
+    return {
+      ...field,
+      // The plugin marks this field read-only, so the default is the only
+      // value shown by the official create form. It also keeps direct creates
+      // on the same seven-day invitation policy.
+      defaultValue: () => new Date(Date.now() + adminInvitationLifetimeMilliseconds).toISOString(),
+      validate: validateAdminInvitationExpiresAt,
+    } satisfies DateField
   }),
 })
 
@@ -295,6 +327,9 @@ export const betterAuthPluginOptions = {
   accounts: {
     hidden: true,
     collectionOverrides: ({ collection }) => restrictAuthInternalCollection(collection),
+  },
+  adminInvitations: {
+    collectionOverrides: ({ collection }) => patchAdminInvitationCollection(collection),
   },
   sessions: {
     hidden: true,
