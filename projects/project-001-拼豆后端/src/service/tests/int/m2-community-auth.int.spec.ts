@@ -11,6 +11,10 @@ import { POST as featureCommunity } from '@/app/api/v1/admin/community/posts/[id
 import { GET as listModerationPosts } from '@/app/api/v1/admin/community/posts/route'
 import { POST as publishCommunity, GET as listCommunity } from '@/app/api/v1/community/route'
 import { GET as getCommunity, PATCH as updateCommunity } from '@/app/api/v1/community/[id]/route'
+import { GET as listMyCommunityPosts } from '@/app/api/v1/community/me/posts/route'
+import { GET as listCommunityFavorites } from '@/app/api/v1/community/favorites/route'
+import { GET as publicCreator } from '@/app/api/v1/community/creators/[id]/route'
+import { GET as listCreatorPosts } from '@/app/api/v1/community/creators/[id]/posts/route'
 import { POST as copyCommunity } from '@/app/api/v1/community/[id]/copy/route'
 import { POST as withdrawCommunity } from '@/app/api/v1/community/[id]/withdraw/route'
 import { POST as uploadCommunityMedia } from '@/app/api/v1/community/media/upload/route'
@@ -188,6 +192,18 @@ const interaction = async (postId: string, kind: 'like' | 'favorite', user: Test
   return handler(request, { params: Promise.resolve({ id: postId, kind }) })
 }
 
+const getRead = (url: string, user?: TestUser) => new Request(url, { headers: user ? { cookie: user.cookie, origin } : { origin } })
+
+const getCreatorId = async (user: TestUser): Promise<string> => {
+  const response = await listMyCommunityPosts(getRead(`${origin}/api/v1/community/me/posts`, user))
+  expect(response.status).toBe(200)
+  const pool = (payload.db as unknown as { pool: { query: (query: string, values: unknown[]) => Promise<{ rows: Array<{ public_id: string }> }> } }).pool
+  const result = await pool.query('SELECT public_id FROM community_creator_profiles WHERE owner_id = $1', [user.userId])
+  const creatorId = result.rows[0]?.public_id
+  if (!creatorId) throw new Error('M2 用户能力测试未取得 creatorId。')
+  return creatorId
+}
+
 const setRole = async (userId: number, role: 'user' | 'staff' | 'admin') => {
   const pool = (payload.db as unknown as { pool: { query: (query: string, values: unknown[]) => Promise<unknown> } }).pool
   await pool.query('DELETE FROM users_role WHERE parent_id = $1', [userId])
@@ -219,13 +235,16 @@ describe('M2 认证发布、复制与回收主链路', () => {
 
     const anonymousBefore = await getCommunity(new Request(`${origin}/api/v1/community/${postId}`), { params: Promise.resolve({ id: postId }) })
     expect(anonymousBefore.status).toBe(200)
-    const publicBody = await anonymousBefore.json()
+    const publicBody = await anonymousBefore.json() as { post: { author: { creatorId: string } } }
+    expect(publicBody.post.author.creatorId).toMatch(/^creator_[a-f0-9]{32}$/)
+    expect(publicBody.post.author.creatorId).not.toBe(String(author.userId))
     expect(JSON.stringify(publicBody)).not.toMatch(/(?:email|owner|document|storageKey|inventory)/i)
 
     const privateUpdate = await updateWork(jsonWrite(`${origin}/api/v1/works/${workId}/document`, { expectedRevision: 1, document: patternDocument('私有修改不应影响公开快照', 1, '#ABCDEF') }, author.cookie, 'PATCH'), { params: Promise.resolve({ id: workId }) })
     expect(privateUpdate.status).toBe(200)
     const stillPublished = await getCommunity(new Request(`${origin}/api/v1/community/${postId}`), { params: Promise.resolve({ id: postId }) })
     expect(stillPublished.status).toBe(200)
+    await expect(stillPublished.json()).resolves.toMatchObject({ post: { author: { creatorId: publicBody.post.author.creatorId } } })
     const pool = (payload.db as unknown as { pool: { query: (query: string, values: unknown[]) => Promise<{ rows: Array<{ document: unknown }> }> } }).pool
     const frozen = await pool.query('SELECT v.document FROM published_pattern_versions v JOIN community_posts p ON p.current_version_id = v.id WHERE p.public_id = $1', [postId])
     expect(JSON.stringify(frozen.rows[0]?.document)).toContain('#123456')
@@ -410,5 +429,64 @@ describe('M2 认证发布、复制与回收主链路', () => {
     expect((await listPostIds('likes', 3, undefined, sortKey)).postIds).toEqual([oldest, middle, newest])
     expect((await listPostIds('hot', 3, undefined, sortKey)).postIds).toEqual([oldest, middle, newest])
     expect((await listPostIds('popular', 3, undefined, sortKey)).postIds).toEqual([oldest, middle, newest])
+  })
+
+  it('用户能力读取保持 owner/匿名边界、绑定 cursor，且不可用收藏可幂等取消', async () => {
+    const author = await signedInUser('M2 User Read Author')
+    const collector = await signedInUser('M2 User Read Collector')
+    const workId = await createActivePattern(author, '用户能力读取作品')
+    const postId = await publish(author, workId, '用户能力读取帖子')
+    const creatorId = await getCreatorId(author)
+    const pool = (payload.db as unknown as { pool: { query: (query: string, values: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> } }).pool
+    await pool.query('UPDATE users SET image = $1 WHERE id = $2', ['https://example.com/avatar.png', author.userId])
+
+    expect((await interaction(postId, 'like', collector, true, `m2-user-read-like-${randomUUID()}`)).status).toBe(200)
+    expect((await interaction(postId, 'favorite', collector, true, `m2-user-read-favorite-${randomUUID()}`)).status).toBe(200)
+
+    const publicList = await listCommunity(new Request(`${origin}/api/v1/community?q=${encodeURIComponent('用户能力读取帖子')}`))
+    expect(publicList.status).toBe(200)
+    const publicListBody = await publicList.json() as { posts: Array<{ postId: string; author: { creatorId: string } }> }
+    expect(publicListBody.posts.some((item) => item.postId === postId && item.author.creatorId === creatorId)).toBe(true)
+
+    const own = await listMyCommunityPosts(getRead(`${origin}/api/v1/community/me/posts?limit=1`, author))
+    expect(own.status).toBe(200)
+    const ownBody = await own.json() as { posts: Array<{ postId: string; coverMedia: unknown }>; nextCursor: string | null }
+    expect(ownBody.posts).toHaveLength(1)
+    expect(ownBody.posts[0]).toMatchObject({ postId, status: 'published' })
+    expect(ownBody.posts[0]?.coverMedia).toEqual(expect.objectContaining({ mediaId: expect.stringMatching(/^community_media_/) }))
+    expect(JSON.stringify(ownBody)).not.toMatch(/(?:email|storageKey|reason|workDocument|workAsset)/i)
+    expect((await listMyCommunityPosts(getRead(`${origin}/api/v1/community/me/posts?status=unknown`, author))).status).toBe(422)
+    expect((await listMyCommunityPosts(getRead(`${origin}/api/v1/community/me/posts?limit=0`, author))).status).toBe(422)
+
+    const profile = await publicCreator(getRead(`${origin}/api/v1/community/creators/${creatorId}`), { params: Promise.resolve({ id: creatorId }) })
+    expect(profile.status).toBe(200)
+    await expect(profile.json()).resolves.toMatchObject({ creator: { creatorId, avatarUrl: 'https://example.com/avatar.png', stats: { likeCount: 1, favoriteCount: 1 } } })
+    const creatorPosts = await listCreatorPosts(getRead(`${origin}/api/v1/community/creators/${creatorId}/posts?limit=1`), { params: Promise.resolve({ id: creatorId }) })
+    expect(creatorPosts.status).toBe(200)
+    const creatorPostsBody = await creatorPosts.json() as { posts: Array<{ postId: string; author: { creatorId: string } }>; nextCursor: string | null }
+    expect(creatorPostsBody.posts.map((post) => post.postId)).toEqual([postId])
+    expect(creatorPostsBody.posts[0]?.author.creatorId).toBe(creatorId)
+    expect(JSON.stringify(creatorPostsBody)).not.toMatch(/(?:email|storageKey|reason|owner|document)/i)
+    expect((await listCreatorPosts(getRead(`${origin}/api/v1/community/creators/${creatorId}/posts?cursor=broken`), { params: Promise.resolve({ id: creatorId }) })).status).toBe(422)
+    expect((await listCreatorPosts(getRead(`${origin}/api/v1/community/creators/creator_invalid/posts`), { params: Promise.resolve({ id: 'creator_invalid' }) })).status).toBe(404)
+
+    const available = await listCommunityFavorites(getRead(`${origin}/api/v1/community/favorites`, collector))
+    expect(available.status).toBe(200)
+    const availableBody = await available.json() as { favorites: Array<{ postId: string; availability: string; title?: string; author?: { creatorId: string } }> }
+    expect(availableBody.favorites.some((item) => item.postId === postId && item.availability === 'available' && item.title === '用户能力读取帖子' && item.author?.creatorId === creatorId)).toBe(true)
+
+    expect((await withdrawCommunity(jsonWrite(`${origin}/api/v1/community/${postId}/withdraw`, {}, author.cookie, 'POST'), { params: Promise.resolve({ id: postId }) })).status).toBe(200)
+    const withdrawnOwn = await listMyCommunityPosts(getRead(`${origin}/api/v1/community/me/posts?status=withdrawn`, author))
+    expect(withdrawnOwn.status).toBe(200)
+    const withdrawnOwnBody = await withdrawnOwn.json() as { posts: Array<{ coverMedia: unknown }> }
+    expect(withdrawnOwnBody.posts).toEqual([expect.objectContaining({ coverMedia: null })])
+    const unavailable = await listCommunityFavorites(getRead(`${origin}/api/v1/community/favorites`, collector))
+    expect(unavailable.status).toBe(200)
+    const unavailableBody = await unavailable.json() as { favorites: Array<Record<string, unknown>> }
+    expect(unavailableBody.favorites).toEqual([expect.objectContaining({ postId, availability: 'unavailable', displayLabel: '内容不可用' })])
+    expect(JSON.stringify(unavailableBody)).not.toMatch(/(?:title|media|reason|status|owner|storageKey)/i)
+    expect((await interaction(postId, 'favorite', collector, false, `m2-user-read-unfavorite-${randomUUID()}`)).status).toBe(200)
+    expect((await interaction(postId, 'favorite', collector, false, `m2-user-read-unfavorite-again-${randomUUID()}`)).status).toBe(200)
+    await expect((await listCommunityFavorites(getRead(`${origin}/api/v1/community/favorites`, collector))).json()).resolves.toMatchObject({ favorites: [] })
   })
 })

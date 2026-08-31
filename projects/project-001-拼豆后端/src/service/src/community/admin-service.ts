@@ -1,6 +1,7 @@
 // 文件开头说明：M2.2 社区治理服务只读取社区帖子、冻结快照、社区媒体、举报、
-// 用户主动填写的社区资料和运营档案。所有查询均显式投影，绝不读取私密 Work、
-// 认证资料、邮箱、原图或 storageKey；媒体字节只能经受控路由返回。
+// 用户主动填写的社区资料和运营档案。公开作者投影额外读取 users.image
+// 及 published 帖子聚合统计；所有查询均显式投影，绝不读取私密 Work、邮箱、
+// 原图或 storageKey；媒体字节只能经受控路由返回。
 import { createHash, randomUUID } from 'crypto'
 
 import { sql } from '@payloadcms/db-postgres'
@@ -179,6 +180,7 @@ const postSummary = (row: DatabaseRow) => {
 
 const creatorProjection = (row: DatabaseRow, socialLinks: DatabaseRow[] = [], notes: DatabaseRow[] = []) => ({
   creatorId: asString(row.creator_public_id ?? row.public_id),
+  ...(row.avatar_url !== undefined ? { avatarUrl: row.avatar_url === null ? null : asString(row.avatar_url) } : {}),
   displayName: row.display_name === null || row.display_name === undefined ? null : asString(row.display_name),
   bio: row.bio === null || row.bio === undefined ? null : asString(row.bio),
   createdAt: dateValue(row.creator_created_at ?? row.created_at),
@@ -190,6 +192,9 @@ const creatorProjection = (row: DatabaseRow, socialLinks: DatabaseRow[] = [], no
     visibilityLabel: asString(link.visibility) === 'hidden' ? '隐藏' : '公开',
     updatedAt: dateValue(link.updated_at),
   })),
+  ...(row.published_like_count !== undefined || row.published_favorite_count !== undefined ? {
+    stats: { likeCount: asNumber(row.published_like_count ?? 0), favoriteCount: asNumber(row.published_favorite_count ?? 0) },
+  } : {}),
   operations: row.watchlist_status === undefined ? undefined : {
     watchlistStatus: asString(row.watchlist_status) as WatchlistStatus,
     watchReason: row.watch_reason === null ? null : asString(row.watch_reason),
@@ -780,10 +785,25 @@ export const deleteOwnSocialLink = async (context: CommunityOperatorSessionConte
 export const getPublicCommunityCreator = async (context: Pick<CommunityOperatorSessionContext, 'payload'>, creatorId: string): Promise<Record<string, unknown>> => {
   parseCreatorId(creatorId)
   const pool = getPool(context)
-  const result = await pool.query(`SELECT id AS profile_id, public_id AS creator_public_id, display_name, bio, created_at AS creator_created_at, updated_at AS creator_updated_at FROM community_creator_profiles WHERE public_id = $1`, [creatorId])
+  const result = await pool.query(`SELECT cp.id AS profile_id, cp.public_id AS creator_public_id, cp.display_name, cp.bio,
+      u.image AS avatar_url,
+      COALESCE((SELECT SUM(p.like_count) FROM community_posts p WHERE p.owner_id = cp.owner_id AND p.status = 'published'), 0)::int AS published_like_count,
+      COALESCE((SELECT SUM(p.favorite_count) FROM community_posts p WHERE p.owner_id = cp.owner_id AND p.status = 'published'), 0)::int AS published_favorite_count,
+      cp.created_at AS creator_created_at, cp.updated_at AS creator_updated_at
+    FROM community_creator_profiles cp JOIN users u ON u.id = cp.owner_id WHERE cp.public_id = $1`, [creatorId])
   const profile = result.rows[0]
   if (!profile) throw new BusinessApiError('COMMUNITY_CREATOR_NOT_FOUND', '社区作者不存在。', 404)
-  return { creator: creatorProjection(profile, await socialLinksForProfile(pool, asNumber(profile.profile_id), true)) }
+  const links = await socialLinksForProfile(pool, asNumber(profile.profile_id), true)
+  return {
+    creator: {
+      creatorId: asString(profile.creator_public_id),
+      avatarUrl: profile.avatar_url === null || profile.avatar_url === undefined ? null : asString(profile.avatar_url),
+      displayName: profile.display_name === null || profile.display_name === undefined ? null : asString(profile.display_name),
+      bio: profile.bio === null || profile.bio === undefined ? null : asString(profile.bio),
+      socialLinks: links.map((link) => ({ platform: asString(link.platform), url: asString(link.url) })),
+      stats: { likeCount: asNumber(profile.published_like_count ?? 0), favoriteCount: asNumber(profile.published_favorite_count ?? 0) },
+    },
+  }
 }
 
 export const ensureCommunityCreatorForPost = async (context: ActiveSessionContext): Promise<void> => {

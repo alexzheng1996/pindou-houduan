@@ -29,6 +29,9 @@ type CommunityListCursor = {
   isFeatured?: boolean
   score?: number
 }
+type OwnerPostsCursor = { v: 1; scope: 'owner-posts'; ownerId: number; statuses: string; updatedAt: number; id: number }
+type CreatorPostsCursor = { v: 1; scope: 'creator-posts'; creatorId: string; publishedAt: number; id: number }
+type FavoritesCursor = { v: 1; scope: 'favorites'; ownerId: number; createdAt: number; id: number }
 
 const postIdPattern = /^community_post_[a-f0-9]{32}$/
 const mediaIdPattern = /^community_media_[a-f0-9]{32}$/
@@ -47,7 +50,7 @@ const asNumber = (value: unknown): number => {
   if (!Number.isSafeInteger(n)) throw new BusinessApiError('INTERNAL_ERROR', '服务器暂时无法处理请求。', 500)
   return n
 }
-const getPool = (context: ActiveSessionContext): Pool => {
+const getPool = (context: Pick<ActiveSessionContext, 'payload'>): Pool => {
   const pool = (context.payload.db as unknown as { pool?: Pool }).pool
   if (!pool) throw new BusinessApiError('TRANSACTION_UNAVAILABLE', '服务器暂时无法处理请求。', 500)
   return pool
@@ -294,7 +297,11 @@ const postProjection = (row: DatabaseRow, media: DatabaseRow[] = []) => ({
   tags: Array.isArray(row.tags) ? row.tags : [],
   status: asString(row.status) as PostStatus,
   allowCopy: Boolean(row.allow_copy),
-  author: { name: asString(row.author_name_snapshot || 'PixoMosaic 用户'), displayName: asString(row.author_name_snapshot || 'PixoMosaic 用户') },
+  author: {
+    creatorId: asString(row.creator_public_id),
+    name: asString(row.author_name_snapshot || 'PixoMosaic 用户'),
+    displayName: asString(row.author_name_snapshot || 'PixoMosaic 用户'),
+  },
   source: { workRevision: asNumber(row.source_work_revision), isAvailable: row.source_post_status ? row.source_post_status === 'published' : row.status === 'published' },
   version: row.version_public_id ? { versionId: asString(row.version_public_id), kind: asString(row.kind), gridColumns: asNumber(row.grid_columns), gridRows: asNumber(row.grid_rows), colorCount: asNumber(row.color_count), totalBeadCount: asNumber(row.total_bead_count), difficulty: asString(row.difficulty) === '简单' ? 'simple' : asString(row.difficulty) === '中等' ? 'medium' : 'challenging', beadSizeMm: row.bead_size_mm === null ? null : Number(row.bead_size_mm) } : null,
   media: publicMediaProjection(media),
@@ -310,6 +317,181 @@ const postProjection = (row: DatabaseRow, media: DatabaseRow[] = []) => ({
   ...(typeof row.is_favorited === 'boolean' ? { isFavorited: row.is_favorited } : {}),
   publishedAt: row.published_at instanceof Date ? row.published_at.toISOString() : asString(row.published_at),
 })
+
+const publishedPostProjection = (row: DatabaseRow, media: DatabaseRow[] = []) => ({
+  postId: asString(row.post_public_id ?? row.public_id),
+  title: asString(row.title),
+  category: asString(row.category),
+  tags: Array.isArray(row.tags) ? row.tags : [],
+  status: 'published' as const,
+  allowCopy: Boolean(row.allow_copy),
+  author: {
+    creatorId: asString(row.creator_public_id),
+    name: asString(row.author_name_snapshot || 'PixoMosaic 用户'),
+    displayName: asString(row.author_display_name || row.author_name_snapshot || 'PixoMosaic 用户'),
+  },
+  publishedAt: row.published_at instanceof Date ? row.published_at.toISOString() : asString(row.published_at),
+  coverUrl: media.find((item) => item.role === 'cover')
+    ? `/api/v1/community/media/${encodeURIComponent(asString(media.find((item) => item.role === 'cover')?.public_id))}`
+    : null,
+  gallery: media.filter((item) => item.role === 'gallery').map((item) => ({
+    mediaId: asString(item.public_id),
+    url: `/api/v1/community/media/${encodeURIComponent(asString(item.public_id))}`,
+    alt: item.alt_text === null ? null : asString(item.alt_text),
+  })),
+  version: row.version_public_id ? {
+    versionId: asString(row.version_public_id),
+    kind: asString(row.kind) as 'pattern' | 'board',
+    gridColumns: asNumber(row.grid_columns),
+    gridRows: asNumber(row.grid_rows),
+    colorCount: asNumber(row.color_count),
+    totalBeadCount: asNumber(row.total_bead_count),
+    difficulty: asString(row.difficulty) === '简单' ? 'simple' : asString(row.difficulty) === '中等' ? 'medium' : 'challenging',
+    beadSizeMm: row.bead_size_mm === null ? null : Number(row.bead_size_mm),
+  } : null,
+  stats: { likeCount: asNumber(row.like_count ?? 0), favoriteCount: asNumber(row.favorite_count ?? 0) },
+  ...(typeof row.is_liked === 'boolean' ? { isLiked: row.is_liked } : {}),
+  ...(typeof row.is_favorited === 'boolean' ? { isFavorited: row.is_favorited } : {}),
+})
+
+const parseStrictLimit = (searchParams: URLSearchParams): number => {
+  const raw = searchParams.get('limit')
+  if (raw === null || raw === '') return 24
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < 1 || value > 50) throw new BusinessApiError('COMMUNITY_INPUT_INVALID', '分页数量无效。', 422)
+  return value
+}
+
+const encodeOpaque = (value: object): string => Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
+const decodeOpaque = (value: string): Record<string, unknown> => {
+  try {
+    const decoded: unknown = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+    if (!isRecord(decoded)) throw new Error('invalid cursor')
+    return decoded
+  }
+  catch { throw new BusinessApiError('COMMUNITY_INPUT_INVALID', '分页游标无效。', 422) }
+}
+const timestampMs = (value: unknown): number => {
+  const result = value instanceof Date ? value.getTime() : typeof value === 'string' ? new Date(value).getTime() : NaN
+  if (!Number.isSafeInteger(result) || result < 0) throw new BusinessApiError('INTERNAL_ERROR', '服务器暂时无法处理请求。', 500)
+  return result
+}
+const parseOwnerStatuses = (searchParams: URLSearchParams): string[] => {
+  const values = searchParams.getAll('status').flatMap((item) => item.split(','))
+  if (!values.length) return ['published', 'withdrawn', 'takedown', 'deleted']
+  const allowed = new Set<PostStatus>(['published', 'withdrawn', 'takedown', 'deleted'])
+  const statuses = [...new Set(values.map((item) => item.trim()).filter(Boolean))]
+  if (!statuses.length || statuses.some((item) => !allowed.has(item as PostStatus))) throw new BusinessApiError('COMMUNITY_INPUT_INVALID', '内容状态筛选无效。', 422)
+  return statuses.sort()
+}
+
+const readMediaByPost = async (pool: Pool, postIds: number[]): Promise<Map<number, DatabaseRow[]>> => {
+  const result = postIds.length
+    ? await pool.query(`SELECT post_id, public_id, role, sort_order, mime_type, alt_text FROM community_post_media WHERE post_id = ANY($1::int[]) AND status = 'ready' ORDER BY sort_order ASC, id ASC`, [postIds])
+    : { rows: [] }
+  const mediaByPost = new Map<number, DatabaseRow[]>()
+  result.rows.forEach((row) => mediaByPost.set(asNumber(row.post_id), [...(mediaByPost.get(asNumber(row.post_id)) ?? []), row]))
+  return mediaByPost
+}
+
+const ownerPostsCursor = (row: DatabaseRow, statuses: string[], ownerId: number): string => encodeOpaque({ v: 1, scope: 'owner-posts', ownerId, statuses: sha256(statuses.join(',')), updatedAt: timestampMs(row.updated_at), id: asNumber(row.db_post_id) } satisfies OwnerPostsCursor)
+const creatorPostsCursor = (row: DatabaseRow, creatorId: string): string => encodeOpaque({ v: 1, scope: 'creator-posts', creatorId, publishedAt: timestampMs(row.published_at), id: asNumber(row.db_post_id) } satisfies CreatorPostsCursor)
+const favoritesCursor = (row: DatabaseRow, ownerId: number): string => encodeOpaque({ v: 1, scope: 'favorites', ownerId, createdAt: timestampMs(row.favorited_at), id: asNumber(row.favorite_db_id) } satisfies FavoritesCursor)
+
+const parseCursorDate = (value: unknown): number => {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error('invalid cursor')
+  return value as number
+}
+const parseCursorId = (value: unknown): number => {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) throw new Error('invalid cursor')
+  return value as number
+}
+
+export const listOwnCommunityPosts = async (context: ActiveSessionContext, searchParams: URLSearchParams): Promise<Record<string, unknown>> => {
+  const pool = getPool(context)
+  const statuses = parseOwnerStatuses(searchParams)
+  const statusHash = sha256(statuses.join(','))
+  const limit = parseStrictLimit(searchParams)
+  const rawCursor = searchParams.get('cursor')
+  let cursor: OwnerPostsCursor | null = null
+  if (rawCursor) {
+    const decoded = decodeOpaque(rawCursor) as Partial<OwnerPostsCursor>
+    if (decoded.v !== 1 || decoded.scope !== 'owner-posts' || decoded.ownerId !== context.user.id || decoded.statuses !== statusHash) throw new BusinessApiError('COMMUNITY_INPUT_INVALID', '分页游标无效。', 422)
+    try { cursor = { v: 1, scope: 'owner-posts', ownerId: context.user.id, statuses: statusHash, updatedAt: parseCursorDate(decoded.updatedAt), id: parseCursorId(decoded.id) } }
+    catch { throw new BusinessApiError('COMMUNITY_INPUT_INVALID', '分页游标无效。', 422) }
+  }
+  const result = await pool.query(`SELECT p.id AS db_post_id, p.public_id, p.title, p.category, p.tags, p.status, p.allow_copy, p.published_at, p.updated_at, p.like_count, p.favorite_count
+    FROM community_posts p WHERE p.owner_id = $1 AND p.status::text = ANY($2::text[])
+      AND ($3::timestamptz IS NULL OR p.updated_at < $3::timestamptz OR (p.updated_at = $3::timestamptz AND p.id < $4::integer))
+    ORDER BY p.updated_at DESC, p.id DESC LIMIT $5`, [context.user.id, statuses, cursor ? new Date(cursor.updatedAt).toISOString() : null, cursor?.id ?? null, limit + 1])
+  const rows = result.rows.slice(0, limit)
+  const mediaByPost = await readMediaByPost(pool, rows.filter((row) => row.status === 'published').map((row) => asNumber(row.db_post_id)))
+  return {
+    posts: rows.map((row) => ({
+      postId: asString(row.public_id), title: asString(row.title), category: asString(row.category), tags: Array.isArray(row.tags) ? row.tags : [],
+      status: asString(row.status), allowCopy: Boolean(row.allow_copy), publishedAt: row.published_at instanceof Date ? row.published_at.toISOString() : asString(row.published_at), updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : asString(row.updated_at),
+      coverMedia: row.status === 'published' && mediaByPost.get(asNumber(row.db_post_id))?.find((item) => item.role === 'cover')
+        ? (() => { const cover = mediaByPost.get(asNumber(row.db_post_id))!.find((item) => item.role === 'cover')!; return { mediaId: asString(cover.public_id), url: `/api/v1/community/media/${encodeURIComponent(asString(cover.public_id))}`, altText: cover.alt_text === null ? null : asString(cover.alt_text) } })()
+        : null,
+      stats: { likeCount: asNumber(row.like_count), favoriteCount: asNumber(row.favorite_count) },
+    })),
+    nextCursor: result.rows.length > limit && rows.length ? ownerPostsCursor(rows[rows.length - 1]!, statuses, context.user.id) : null,
+  }
+}
+
+export const listPublicCreatorPosts = async (context: Pick<ActiveSessionContext, 'payload'>, creatorId: string, searchParams: URLSearchParams): Promise<Record<string, unknown>> => {
+  const pool = getPool(context)
+  if (!/^creator_[a-f0-9]{32}$/.test(creatorId)) throw new BusinessApiError('COMMUNITY_CREATOR_NOT_FOUND', '社区作者不存在。', 404)
+  const creator = await pool.query('SELECT owner_id FROM community_creator_profiles WHERE public_id = $1', [creatorId])
+  const ownerId = creator.rows[0]?.owner_id
+  if (!Number.isSafeInteger(ownerId)) throw new BusinessApiError('COMMUNITY_CREATOR_NOT_FOUND', '社区作者不存在。', 404)
+  const limit = parseStrictLimit(searchParams)
+  const rawCursor = searchParams.get('cursor')
+  let cursor: CreatorPostsCursor | null = null
+  if (rawCursor) {
+    const decoded = decodeOpaque(rawCursor) as Partial<CreatorPostsCursor>
+    if (decoded.v !== 1 || decoded.scope !== 'creator-posts' || decoded.creatorId !== creatorId) throw new BusinessApiError('COMMUNITY_INPUT_INVALID', '分页游标无效。', 422)
+    try { cursor = { v: 1, scope: 'creator-posts', creatorId, publishedAt: parseCursorDate(decoded.publishedAt), id: parseCursorId(decoded.id) } }
+    catch { throw new BusinessApiError('COMMUNITY_INPUT_INVALID', '分页游标无效。', 422) }
+  }
+  const result = await pool.query(`SELECT p.id AS db_post_id, p.public_id AS post_public_id, p.title, p.category, p.tags, p.allow_copy, p.published_at, p.author_name_snapshot, cp.public_id AS creator_public_id, cp.display_name AS author_display_name, p.like_count, p.favorite_count,
+      v.public_id AS version_public_id, v.kind, v.grid_columns, v.grid_rows, v.color_count, v.total_bead_count, v.difficulty, v.bead_size_mm
+    FROM community_posts p JOIN published_pattern_versions v ON v.id = p.current_version_id
+      LEFT JOIN community_creator_profiles cp ON cp.owner_id = p.owner_id
+    WHERE p.owner_id = $1 AND p.status = 'published'
+      AND ($2::timestamptz IS NULL OR p.published_at < $2::timestamptz OR (p.published_at = $2::timestamptz AND p.id < $3::integer))
+    ORDER BY p.published_at DESC, p.id DESC LIMIT $4`, [ownerId, cursor ? new Date(cursor.publishedAt).toISOString() : null, cursor?.id ?? null, limit + 1])
+  const rows = result.rows.slice(0, limit)
+  const mediaByPost = await readMediaByPost(pool, rows.map((row) => asNumber(row.db_post_id)))
+  return { posts: rows.map((row) => publishedPostProjection(row, mediaByPost.get(asNumber(row.db_post_id)) ?? [])), nextCursor: result.rows.length > limit && rows.length ? creatorPostsCursor(rows[rows.length - 1]!, creatorId) : null }
+}
+
+export const listCommunityFavorites = async (context: ActiveSessionContext, searchParams: URLSearchParams): Promise<Record<string, unknown>> => {
+  const pool = getPool(context)
+  const limit = parseStrictLimit(searchParams)
+  const rawCursor = searchParams.get('cursor')
+  let cursor: FavoritesCursor | null = null
+  if (rawCursor) {
+    const decoded = decodeOpaque(rawCursor) as Partial<FavoritesCursor>
+    if (decoded.v !== 1 || decoded.scope !== 'favorites' || decoded.ownerId !== context.user.id) throw new BusinessApiError('COMMUNITY_INPUT_INVALID', '分页游标无效。', 422)
+    try { cursor = { v: 1, scope: 'favorites', ownerId: context.user.id, createdAt: parseCursorDate(decoded.createdAt), id: parseCursorId(decoded.id) } }
+    catch { throw new BusinessApiError('COMMUNITY_INPUT_INVALID', '分页游标无效。', 422) }
+  }
+  const result = await pool.query(`SELECT f.id AS favorite_db_id, f.created_at AS favorited_at, p.id AS db_post_id, p.public_id AS post_public_id, p.title, p.category, p.tags, p.allow_copy, p.status, p.published_at, p.author_name_snapshot, cp.public_id AS creator_public_id, cp.display_name AS author_display_name, p.like_count, p.favorite_count,
+      v.public_id AS version_public_id, v.kind, v.grid_columns, v.grid_rows, v.color_count, v.total_bead_count, v.difficulty, v.bead_size_mm
+    FROM community_favorites f LEFT JOIN community_posts p ON p.id = f.post_id LEFT JOIN published_pattern_versions v ON v.id = p.current_version_id LEFT JOIN community_creator_profiles cp ON cp.owner_id = p.owner_id
+    WHERE f.actor_id = $1 AND ($2::timestamptz IS NULL OR f.created_at < $2::timestamptz OR (f.created_at = $2::timestamptz AND f.id < $3::integer))
+    ORDER BY f.created_at DESC, f.id DESC LIMIT $4`, [context.user.id, cursor ? new Date(cursor.createdAt).toISOString() : null, cursor?.id ?? null, limit + 1])
+  const rows = result.rows.slice(0, limit)
+  const publishedRows = rows.filter((row) => row.status === 'published' && row.db_post_id !== null)
+  const mediaByPost = await readMediaByPost(pool, publishedRows.map((row) => asNumber(row.db_post_id)))
+  return {
+    favorites: rows.map((row) => row.status === 'published' && row.db_post_id !== null
+      ? { ...publishedPostProjection(row, mediaByPost.get(asNumber(row.db_post_id)) ?? []), availability: 'available' as const, favoritedAt: row.favorited_at instanceof Date ? row.favorited_at.toISOString() : asString(row.favorited_at) }
+      : { postId: row.post_public_id === null || row.post_public_id === undefined ? 'community_post_unavailable' : asString(row.post_public_id), availability: 'unavailable' as const, displayLabel: '内容不可用' as const, favoritedAt: row.favorited_at instanceof Date ? row.favorited_at.toISOString() : asString(row.favorited_at) }),
+    nextCursor: result.rows.length > limit && rows.length ? favoritesCursor(rows[rows.length - 1]!, context.user.id) : null,
+  }
+}
 
 const communityListCursorClause = (sort: CommunityListSort): string => {
   if (sort === 'recommended') return `AND ($4::boolean IS NULL OR (
@@ -346,8 +528,8 @@ const listCommunityFromPool = async (pool: Pool, searchParams?: URLSearchParams)
     : sort === 'recommended'
       ? [cursor?.isFeatured ?? null, cursor ? new Date(cursor.publishedAt).toISOString() : null, cursor?.id ?? null]
       : [cursor?.score ?? null, cursor ? new Date(cursor.publishedAt).toISOString() : null, cursor?.id ?? null]
-  const result = await pool.query(`SELECT p.id AS db_post_id, p.public_id AS post_public_id, p.title, p.category, p.tags, p.status, p.allow_copy, p.is_featured, p.author_name_snapshot, p.source_work_revision, p.like_count, p.favorite_count, p.published_at, v.public_id AS version_public_id, v.kind, v.grid_columns, v.grid_rows, v.color_count, v.total_bead_count, v.difficulty, v.bead_size_mm
-    FROM community_posts p JOIN published_pattern_versions v ON v.id = p.current_version_id
+  const result = await pool.query(`SELECT p.id AS db_post_id, p.public_id AS post_public_id, p.title, p.category, p.tags, p.status, p.allow_copy, p.is_featured, p.author_name_snapshot, cp.public_id AS creator_public_id, p.source_work_revision, p.like_count, p.favorite_count, p.published_at, v.public_id AS version_public_id, v.kind, v.grid_columns, v.grid_rows, v.color_count, v.total_bead_count, v.difficulty, v.bead_size_mm
+    FROM community_posts p JOIN published_pattern_versions v ON v.id = p.current_version_id JOIN community_creator_profiles cp ON cp.owner_id = p.owner_id
     WHERE p.status = 'published' AND ($1 = '' OR p.title ILIKE '%' || $1 || '%' OR p.tags::text ILIKE '%' || $1 || '%')
       AND ($2 = '' OR p.category = $2) AND ($3 = '' OR p.tags @> jsonb_build_array($3::text))
       ${communityListCursorClause(sort)}
@@ -382,10 +564,10 @@ export const getCommunityPost = async (payload: ActiveSessionContext['payload'],
   parsePostId(postId)
   const pool = (payload.db as unknown as { pool?: Pool }).pool
   if (!pool) throw new BusinessApiError('TRANSACTION_UNAVAILABLE', '服务器暂时无法处理请求。', 500)
-  const result = await pool.query(`SELECT p.*, v.public_id AS version_public_id, v.kind, v.grid_columns, v.grid_rows, v.color_count, v.total_bead_count, v.difficulty, v.bead_size_mm,
+  const result = await pool.query(`SELECT p.*, cp.public_id AS creator_public_id, v.public_id AS version_public_id, v.kind, v.grid_columns, v.grid_rows, v.color_count, v.total_bead_count, v.difficulty, v.bead_size_mm,
     EXISTS (SELECT 1 FROM community_likes l WHERE l.post_id = p.id AND l.actor_id = $2) AS is_liked,
     EXISTS (SELECT 1 FROM community_favorites f WHERE f.post_id = p.id AND f.actor_id = $2) AS is_favorited
-    FROM community_posts p JOIN published_pattern_versions v ON v.id = p.current_version_id WHERE p.public_id = $1 AND p.status = 'published'`, [postId, viewerId])
+    FROM community_posts p JOIN published_pattern_versions v ON v.id = p.current_version_id JOIN community_creator_profiles cp ON cp.owner_id = p.owner_id WHERE p.public_id = $1 AND p.status = 'published'`, [postId, viewerId])
   const row = result.rows[0]
   if (!row) throw new BusinessApiError('COMMUNITY_POST_NOT_FOUND', '社区图纸不存在。', 404)
   const media = await pool.query(`SELECT public_id, role, sort_order, mime_type, alt_text FROM community_post_media WHERE post_id = $1 AND status = 'ready' ORDER BY sort_order ASC, id ASC`, [row.id])
@@ -563,9 +745,13 @@ export const toggleInteraction = async (context: ActiveSessionContext, postId: s
       // Serialize the cached counter update with the relation insert/delete.
       // Without the row lock, concurrent actors can each count an old snapshot
       // and the last UPDATE can leave like_count/favorite_count too small.
-      const post = await db.execute(sql`SELECT id, public_id, status FROM community_posts WHERE public_id = ${postId} AND status = 'published' FOR UPDATE`)
+      const post = await db.execute(sql`SELECT id, public_id, status FROM community_posts
+        WHERE public_id = ${postId} AND (status = 'published' OR (${active} = false AND ${kind === 'favorite'})) FOR UPDATE`)
       const postRow = post.rows[0]
-      if (!postRow) throw new BusinessApiError('COMMUNITY_POST_NOT_FOUND', '社区图纸不存在。', 404)
+      if (!postRow) {
+        if (!active && kind === 'favorite') return { postId, favorited: false, favoriteCount: 0 }
+        throw new BusinessApiError('COMMUNITY_POST_NOT_FOUND', '社区图纸不存在。', 404)
+      }
       if (active) await db.execute(sql`INSERT INTO ${sql.raw(table)} (post_id, actor_id) VALUES (${asNumber(postRow.id)}, ${context.user.id}) ON CONFLICT (actor_id, post_id) DO NOTHING`)
       else await db.execute(sql`DELETE FROM ${sql.raw(table)} WHERE post_id = ${asNumber(postRow.id)} AND actor_id = ${context.user.id}`)
       const count = await db.execute(sql`SELECT COUNT(*)::int AS count FROM ${sql.raw(table)} WHERE post_id = ${asNumber(postRow.id)}`)
