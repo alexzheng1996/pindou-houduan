@@ -239,8 +239,7 @@ export const betterAuthOptions = {
         input: false,
         returned: false,
       },
-      // Inventory thresholds persist with the account and are only exposed
-      // through the authenticated inventory API.
+      // 库存阈值与账号一同保存，只能通过已认证的库存接口读取或修改。
       inventoryOutOfStockThreshold: {
         type: 'number',
         defaultValue: 50,

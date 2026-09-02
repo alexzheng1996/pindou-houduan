@@ -1,7 +1,6 @@
 import { MigrateDownArgs, MigrateUpArgs, sql } from '@payloadcms/db-postgres'
 
-// Rules are stored per account; health remains derived at read time and is
-// deliberately never materialized in inventory_items or ledger rows.
+// 规则按账号保存；健康度在读取时推导，绝不写入 inventory_items 或账本明细。
 export async function up({ db }: MigrateUpArgs): Promise<void> {
   await db.execute(sql`
     ALTER TABLE "users"

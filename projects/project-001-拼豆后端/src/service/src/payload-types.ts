@@ -428,6 +428,7 @@ export interface Article {
   publicId: string;
   section: 'guides' | 'blog';
   slug: string;
+  articleType: 'tool_guide' | 'faq' | 'creative' | 'product_tutorial' | 'case_study' | 'announcement';
   title: string;
   excerpt: string;
   body: {
@@ -445,7 +446,6 @@ export interface Article {
     };
     [k: string]: unknown;
   };
-  articleType: 'tool_guide' | 'faq' | 'creative' | 'product_tutorial' | 'case_study' | 'announcement';
   authorType: 'staff' | 'codex_assisted';
   authorDisplayName: string;
   sourceList?:
@@ -462,8 +462,8 @@ export interface Article {
   };
   seoSuggestions?: {
     seoTitle?: string | null;
-    metaDescription?: string | null;
     primaryTopic?: string | null;
+    metaDescription?: string | null;
     twitterCard?: ('summary' | 'summary_large_image') | null;
   };
   status: 'draft';
@@ -776,10 +776,10 @@ export interface ArticlesSelect<T extends boolean = true> {
   publicId?: T;
   section?: T;
   slug?: T;
+  articleType?: T;
   title?: T;
   excerpt?: T;
   body?: T;
-  articleType?: T;
   authorType?: T;
   authorDisplayName?: T;
   sourceList?:
@@ -800,8 +800,8 @@ export interface ArticlesSelect<T extends boolean = true> {
     | T
     | {
         seoTitle?: T;
-        metaDescription?: T;
         primaryTopic?: T;
+        metaDescription?: T;
         twitterCard?: T;
       };
   status?: T;

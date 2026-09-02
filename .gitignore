@@ -1,0 +1,8 @@
+# Workspace-local temporary files
+.playwright-cli/
+.playwright-mcp/
+
+# OS/editor noise
+.DS_Store
+.idea/
+*.swp
